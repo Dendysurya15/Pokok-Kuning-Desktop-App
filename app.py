@@ -121,7 +121,10 @@ config = load_config_from_db()
 
 def get_model_names():
     global model_folder
-    model_folder = os.path.join(os.getcwd(), "model")  # Path to your model folder
+    # Get absolute path of script directory regardless of where it's run from
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    
+    model_folder = os.path.join(script_dir, "model")  # Path to your model folder
     if os.path.exists(model_folder):
         model_files = [f for f in os.listdir(model_folder) if f.endswith('.pt')]
         model_names = [os.path.splitext(f)[0] for f in model_files]  # Remove the extension
@@ -135,6 +138,9 @@ def folder_callback(sender, app_data, user_data):
     global folder_path_id, select_folder_button_id, convert_button_id
     folder_path = app_data['current_path']  # Get only the current_path
 
+
+    print(folder_path)
+
     # Check if the folder contains any .tif files
     has_tiff_files = any(f.endswith('.tif') for f in os.listdir(folder_path))
 
@@ -143,16 +149,24 @@ def folder_callback(sender, app_data, user_data):
         dpg.set_item_label(select_folder_button_id, "Change Folder Tif")
         # Show the "Convert to SHP" button after confirming there are .tif files
         dpg.show_item(convert_button_id)
+        dpg.show_item("save_annotated_checkbox")
     else:
         dpg.set_value(folder_path_id, "The folder does not contain any .tif files.")
         dpg.set_item_label(select_folder_button_id, "+ Tambah Folder Tif")
         # Hide the button if no .tif files are found
         dpg.hide_item(convert_button_id)
+        dpg.hide_item("save_annotated_checkbox")
 
 def convert_to_shp_callback(sender, app_data, user_data):
     # Show the progress popup window
     global timer_running, start_time
     dpg.show_item("progress_popup")
+
+    # Show annotated progress section if checkbox is checked
+    if dpg.get_value("save_annotated_checkbox"):
+        dpg.show_item("annotated_progress_group")
+    else:
+        dpg.hide_item("annotated_progress_group")
 
     # Initialize progress bar and activity log
     dpg.set_value(progress_bar_id, 0.0)
@@ -169,7 +183,7 @@ def convert_to_shp_callback(sender, app_data, user_data):
 def run_conversion():
     global total_file_tiff, total_abnormal, total_normal
     folder_path = dpg.get_value(folder_path_id).replace("Selected Folder: ", "")
-
+    save_annotated = dpg.get_value("save_annotated_checkbox")
     model_name = dpg.get_value("model_combo")  # Get model name from the combo box
     model_weights = os.path.join(model_folder, model_name + ".pt")
     conf_threshold = dpg.get_value("conf_threshold_slider")
@@ -178,8 +192,11 @@ def run_conversion():
     shp_option = dpg.get_value("shp_checkbox")
     time.sleep(5)
 
+    script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "feature_convert_shp.py")
+
     command = [
-        "python", "feature_convert_shp.py",
+        sys.executable,
+        script_path,
         "--folder", folder_path,
         "--weights", model_weights,
         "--conf", str(conf_threshold),
@@ -190,6 +207,10 @@ def run_conversion():
         command.append("--kml")
     if shp_option:
         command.append("--shp")
+
+    command_str = " ".join(command)
+    print(f"Executing command: {command_str}")
+
 
     process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
@@ -215,15 +236,15 @@ def run_conversion():
                 remaining_files = total_file_tiff - processed
                 estimated_seconds = float(avg_time) * remaining_files
                 
-                if estimated_seconds > 0:
-                    dpg.show_item("estimated_label")
-                    if estimated_seconds < 60:
-                        estimated_display = f"{estimated_seconds:.2f} detik"
-                    else:
-                        estimated_minutes = int(estimated_seconds // 60)
-                        estimated_secs = int(estimated_seconds % 60)
-                        estimated_display = f"{estimated_minutes}:{estimated_secs:02d} menit"
-                    dpg.set_value("estimated_label", f"Estimated Time Remaining: {estimated_display}")
+                # if estimated_seconds > 0:
+                #     dpg.show_item("estimated_label")
+                #     if estimated_seconds < 60:
+                #         estimated_display = f"{estimated_seconds:.2f} detik"
+                #     else:
+                #         estimated_minutes = int(estimated_seconds // 60)
+                #         estimated_secs = int(estimated_seconds % 60)
+                #         estimated_display = f"{estimated_minutes}:{estimated_secs:02d} menit"
+                    # dpg.set_value("estimated_label", f"Estimated Time Remaining: {estimated_display}")
 
                 progress = processed / total_file_tiff if total_file_tiff > 0 else 0
                 dpg.set_value(progress_bar_id, progress)
@@ -233,6 +254,41 @@ def run_conversion():
 
             except json.JSONDecodeError:
                 pass
+
+    if save_annotated:
+        command_annotate = [
+            "python", "feature_save_annotated_file.py",
+            "--folder", folder_path,
+            "--weights", model_weights,
+            "--conf", str(conf_threshold),
+            "--iou", str(iou_threshold),
+            "--max-det", str(dpg.get_value("max_det_input")),
+            "--line-width", str(dpg.get_value("line_width_input")),
+        ]
+
+        print(folder_path)
+        print(model_weights)
+        if dpg.get_value("show_labels_checkbox"):
+            command_annotate.append("--show-labels")
+        if dpg.get_value("show_conf_checkbox"):
+            command_annotate.append("--show-conf")
+
+        process_annotate = subprocess.Popen(command_annotate, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+        while True:
+            output = process_annotate.stdout.readline()
+            if output == '' and process_annotate.poll() is not None:
+                break
+            if output:
+                try:
+                    json_output = json.loads(output)
+                    processed = json_output.get("processed", 0)
+
+                    print(processed)
+                    dpg.set_value(annotated_progress_bar_id, processed / total_file_tiff)
+                    dpg.set_value(annotated_progress_text_id, f"Saving Annotated: {processed} of {total_file_tiff} images processed")
+                except json.JSONDecodeError:
+                    dpg.set_value(annotated_activity_log_id, f"{output.strip()}\n" + dpg.get_value(annotated_activity_log_id))
 
     countdown(3, folder_path)
     
@@ -354,8 +410,18 @@ def countdown(seconds, folder_path):
         time.sleep(1)
     dpg.hide_item(conversion_message_id)
 
-# Create a file dialog for folder selection
-with dpg.file_dialog(directory_selector=True, show=False, callback=folder_callback, id="folder_dialog_id", width=700, height=400):
+current_dir = os.path.dirname(os.path.abspath(__file__))
+
+# Modified file dialog with default_path set to current directory
+with dpg.file_dialog(
+    directory_selector=True, 
+    show=False, 
+    callback=folder_callback, 
+    id="folder_dialog_id", 
+    width=700, 
+    height=400,
+    default_path=current_dir  # Set default path to current directory
+):
     dpg.add_file_extension("", color=(150, 255, 150, 255))
 
 
@@ -370,6 +436,7 @@ with dpg.window(label="App", width=800, height=600, pos=[200, 100]):
     with dpg.group(horizontal=True):
         convert_button_id = dpg.add_button(label="Convert to SHP", show=False, callback=convert_to_shp_callback)
         dpg.bind_item_theme(convert_button_id, green_button_theme)
+        dpg.add_checkbox(label="Save Annotated File", tag="save_annotated_checkbox", show=False)
         dpg.add_button(label="Result Converted", show=False, callback=show_result_window, tag="result_button")
 
     conversion_message_id = dpg.add_text("", color=(0, 255, 0), show=False)
@@ -393,7 +460,7 @@ with dpg.window(label="App", width=800, height=600, pos=[200, 100]):
         with dpg.group(horizontal=False):
             with dpg.group():
                 dpg.add_text("Image Size")
-                dpg.add_combo(["640", "1280", "1920"], default_value=config["imgsz"], tag="imgsz_combo", width=100)
+                dpg.add_combo(["640", "1280", "1920", "9024"], default_value=config["imgsz"], tag="imgsz_combo", width=100)
 
             dpg.add_spacer(height=10)  # Adds vertical spacing of 10 pixels
             dpg.add_checkbox(label="Convert to KML", tag="kml_checkbox", default_value=config["convert_kml"] == "true")
@@ -450,18 +517,28 @@ with dpg.window(label="App", width=800, height=600, pos=[200, 100]):
     dpg.add_text("", color=(0, 255, 0), show=False, tag="save_message")
 
 
-with dpg.window(label="Progress Convert", modal=True, show=False, tag="progress_popup", width=400, height=200):
-    
+with dpg.window(label="Progress Convert", modal=True, show=False, tag="progress_popup", width=400, height=400):
     dpg.add_text("Elapsed Time: 0.00 seconds", tag="timer_label")
     dpg.add_separator()
     
     progress_bar_id = dpg.add_progress_bar(width=-1)
     with dpg.group():
         progress_text_id = dpg.add_text("0 of 0 images processed")
-        dpg.add_text("Estimated Time Remaining: 0.00 seconds", tag="estimated_label", show=False)
-
+        # dpg.add_text("Estimated Time Remaining: 0.00 seconds", tag="estimated_label", show=False)
     dpg.add_separator()
     activity_log_id = dpg.add_text("", wrap=400)
+    
+    # Second progress section for annotated images
+    dpg.add_group(tag="annotated_progress_group", show=False)
+    dpg.add_text("Saving Annotated Images:", parent="annotated_progress_group")
+    dpg.add_progress_bar(width=-1, tag="annotated_progress_bar_id", parent="annotated_progress_group")
+    with dpg.group(parent="annotated_progress_group"):
+        dpg.add_text("0 of 0 images processed", tag="annotated_progress_text_id")
+        dpg.add_text("Estimated Time Remaining: 0.00 seconds", tag="annotated_estimated_label", show=False)
+    dpg.add_separator(parent="annotated_progress_group")
+    dpg.add_text("", wrap=400, tag="annotated_activity_log_id", parent="annotated_progress_group")
+
+    
 
 # Set up viewport
 dpg.create_viewport(title='Desktop App Pokok Kuning Converting Tools With AI', width=1200, height=800)

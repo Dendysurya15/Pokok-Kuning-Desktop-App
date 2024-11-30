@@ -13,22 +13,29 @@ import sys  # Import sys to use flush
 def load_yolo_model(weights_path):
     model = YOLO(weights_path)
     return model
-global_abnormal_count = 0
-global_normal_count = 0
 
 def detect_objects(image_path, model, imgsz, conf, iou, classes=None):
     global global_abnormal_count, global_normal_count
     results = model.predict(source=image_path, imgsz=imgsz, conf=conf, iou=iou, classes=classes, max_det=12000)
     
+    abnormal_count = 0
+    normal_count = 0
+
     for result in results:
         for detection in result.boxes:
             class_id = int(detection.cls)
             if class_id == 0:  # Assuming class 0 is abnormal
-                global_abnormal_count += 1
+                abnormal_count += 1
             elif class_id == 1:  # Assuming class 1 is normal
-                global_normal_count += 1
+                
+                normal_count += 1
     
-    return results
+    progress = {
+        "abnormal_count": abnormal_count,
+        "normal_count": normal_count
+    }
+
+    return results,progress
 
 # Step 2: Convert Image Coordinates to Map Coordinates
 def read_jgw(jgw_file):
@@ -137,7 +144,7 @@ if __name__ == "__main__":
         # print(f"Converting {image_file} to GeoJSON...")
         
         # In the main processing loop
-        detected_objects = detect_objects(image_path, model, args.imgsz, args.conf, args.iou, classes=args.classes)
+        detected_objects, counts = detect_objects(image_path, model, args.imgsz, args.conf, args.iou, classes=args.classes)
 
         # Load the correspoanding JGW file
         base_name = os.path.splitext(image_path)[0]
@@ -173,13 +180,14 @@ if __name__ == "__main__":
        
         progress = {
             
-            "abnormal_count": global_abnormal_count,
-            "normal_count": global_normal_count,
+            
             "processed": index + 1,
             "total": total_files,
             "current_file": image_file,
             "status": "Processed successfully",
             "avg_time_per_file": f"{avg_time:.2f}",
+            "abnormal_count": counts["abnormal_count"],
+            "normal_count": counts["normal_count"]
         }
         print(json.dumps(progress))  # Print the progress in JSON format
         sys.stdout.flush()  # Flush the output
