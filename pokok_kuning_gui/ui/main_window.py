@@ -3,7 +3,7 @@ from PyQt5.QtWidgets import (
     QFileDialog, QCheckBox, QProgressBar, QComboBox, QSlider, QGroupBox, 
     QRadioButton, QSpinBox, QMessageBox, QTextEdit, QDoubleSpinBox
 )
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, pyqtSlot
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, pyqtSlot, QTimer
 from PyQt5.QtGui import QFont, QPixmap, QPalette, QColor
 
 import os
@@ -442,7 +442,7 @@ class MainWindow(QMainWindow):
             self.save_message.setText("Configuration has been saved successfully!")
             
             # Hide message after 3 seconds
-            QThread.singleShot(3000, lambda: self.save_message.setText(""))
+            QTimer.singleShot(3000, lambda: self.save_message.setText(""))
     
     def get_current_config(self):
         return {

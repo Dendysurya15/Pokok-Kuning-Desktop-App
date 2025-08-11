@@ -1,68 +1,70 @@
-# Pokok Kuning Desktop Application
+# Pokok Kuning Desktop App - GUI Version
 
-A GUI application for processing TIF images to detect and map pokok kuning (yellow trees) using YOLOv8.
+## Perbedaan dengan Versi CLI (source/main.py)
 
-## Features
+### Masalah yang Ditemukan:
+1. **Image Size (imgsz)**: 
+   - CLI version: **12800** (default)
+   - GUI version: **1280** (default) ❌
+   - **Perbedaan 10x!** Ini menyebabkan hasil deteksi yang sangat berbeda
 
-- Load and process TIF image files
-- Detect normal and abnormal trees using YOLOv8
-- Convert detection results to GeoJSON, SHP, and KML formats
-- Save annotated images with bounding boxes
-- Configure detection parameters (confidence threshold, IOU threshold, etc.)
-- Save and load configurations
+2. **Max Detection Limit**:
+   - CLI version: **10000** (default)
+   - GUI version: **12000** (default) ❌
 
-## Installation
+3. **Model Path**:
+   - CLI version: `"..\model\yolov8n-pokok-kuning.pt"`
+   - GUI version: `"model/{config['model']}.pt"` ❌
 
-1. Make sure you have Python 3.8 or higher installed
-2. Install the required dependencies:
+### Solusi yang Sudah Diterapkan:
 
+1. **Database Configuration Updated**:
+   - `imgsz`: 1280 → **12800** ✅
+   - `max_det`: 12000 → **10000** ✅
+   - Model path: Fixed to match CLI version ✅
+
+2. **Code Changes**:
+   - `config_manager.py`: Default values updated
+   - `processor.py`: Default fallback values updated
+   - `main_window.py`: QThread.singleShot error fixed
+
+### Cara Menggunakan:
+
+1. **Setup Database** (jika belum):
+   ```bash
+   cd pokok_kuning_gui
+   python setup_db.py
+   ```
+
+2. **Jalankan GUI**:
+   ```bash
+   python main.py
+   ```
+
+3. **Verifikasi Konfigurasi**:
+   - Image Size harus menunjukkan **12800**
+   - Max Det harus menunjukkan **10000**
+
+### Hasil yang Diharapkan:
+
+Setelah perbaikan ini, hasil GUI seharusnya **sama** dengan hasil CLI:
+```bash
+# CLI version
+python source/main.py --folder "C:\Users\jaja.valentino\Desktop\Python\E026_B - Copy" --save-annotated --shp
+
+# GUI version (setelah perbaikan)
+python pokok_kuning_gui/main.py
 ```
-pip install -r requirements.txt
-```
 
-3. Place your YOLOv8 model files (.pt) in the `model` directory
+### Troubleshooting:
 
-## Usage
+Jika GUI masih menampilkan nilai lama:
+1. Hapus `database.db`
+2. Jalankan `python setup_db.py`
+3. Restart GUI
 
-1. Run the application:
+### Catatan Penting:
 
-```
-python main.py
-```
-
-2. Use the "Tambah Folder Tif" button to select a folder containing TIF images
-3. Configure the detection parameters as needed
-4. Click "Convert to SHP" to process the images
-5. View the results using the "Result Converted" button
-
-## Command Line Usage
-
-If you prefer to use the command line, you can run the core functionality directly:
-
-```
-python -m core.processor --folder "path/to/images" --weights "model/yolov8n-pokok-kuning.pt" --save-annotated --shp
-```
-
-Command line options:
-- `--folder`: Path to the folder containing images (required)
-- `--weights`: Path to the YOLO weights file (default: model/yolov8n-pokok-kuning.pt)
-- `--imgsz`: Image size for YOLO model (default: 1280)
-- `--conf`: Confidence threshold (default: 0.2)
-- `--iou`: IoU threshold (default: 0.2)
-- `--classes`: List of class indices to detect
-- `--kml`: Convert GeoJSON to KML
-- `--shp`: Convert GeoJSON to SHP
-- `--skip-invalid`: Skip invalid images instead of stopping
-- `--save-annotated`: Save annotated frames with bounding boxes
-
-## Directory Structure
-
-- `main.py`: Application entry point
-- `ui/`: User interface components
-- `core/`: Core processing functionality
-- `utils/`: Utility functions
-- `model/`: YOLOv8 model files (.pt)
-
-## Requirements
-
-See `requirements.txt` for a list of dependencies.
+- **Image Size 12800** memberikan deteksi yang lebih detail dan akurat
+- **Image Size 1280** memberikan deteksi yang kasar dan kurang akurat
+- Perbedaan ini menyebabkan jumlah deteksi yang sangat berbeda antara CLI dan GUI
