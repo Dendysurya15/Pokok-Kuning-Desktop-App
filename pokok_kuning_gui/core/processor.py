@@ -60,8 +60,8 @@ class ImageProcessor:
                     int(config.get("imgsz", 12800)),  # Changed default from 1280 to 12800
                     float(config.get("conf", 0.2)), 
                     float(config.get("iou", 0.2)),
-                    save_annotated=config.get("save_annotated", False),
-                    annotated_folder=os.path.join(folder_path, "annotated") if config.get("save_annotated", False) else None
+                    save_annotated=config.get("save_annotated") == "true",
+                    annotated_folder=os.path.join(folder_path, "annotated") if config.get("save_annotated") == "true" else None
                 )
                 
                 if detected_objects is None:

@@ -78,7 +78,7 @@ class MainWindow(QMainWindow):
         
         # Folder selection button and path display
         button_layout = QHBoxLayout()
-        self.select_folder_button = QPushButton("+ Tambah Folder Tif")
+        self.select_folder_button = QPushButton("Change Folder Tif")
         self.select_folder_button.clicked.connect(self.select_folder)
         button_layout.addWidget(self.select_folder_button)
         button_layout.addStretch()
@@ -95,7 +95,8 @@ class MainWindow(QMainWindow):
         options_layout.addWidget(self.convert_button)
         
         self.save_annotated_checkbox = QCheckBox("Save Annotated File")
-        self.save_annotated_checkbox.setChecked(False)
+        default_save_annotated = self.config.get("save_annotated") if self.config.get("save_annotated") else "true"
+        self.save_annotated_checkbox.setChecked(default_save_annotated == "true")
         options_layout.addWidget(self.save_annotated_checkbox)
         
         self.result_button = QPushButton("Result Converted")
@@ -125,8 +126,9 @@ class MainWindow(QMainWindow):
         self.model_combo = QComboBox()
         model_names = get_model_names()
         self.model_combo.addItems(model_names)
-        if self.config.get("model") in model_names:
-            self.model_combo.setCurrentText(self.config.get("model"))
+        default_model = self.config.get("model") if self.config.get("model") else "yolov8n-pokok-kuning"
+        if default_model in model_names:
+            self.model_combo.setCurrentText(default_model)
         model_layout.addWidget(self.model_combo)
         col1_layout.addLayout(model_layout)
         
@@ -138,7 +140,8 @@ class MainWindow(QMainWindow):
         self.status_full_radio = QRadioButton("Full Blok")
         self.status_half_radio = QRadioButton("Setengah Blok")
         
-        if self.config.get("status_blok") == "Full Blok":
+        default_status = self.config.get("status_blok") if self.config.get("status_blok") else "Full Blok"
+        if default_status == "Full Blok":
             self.status_full_radio.setChecked(True)
         else:
             self.status_half_radio.setChecked(True)
@@ -156,9 +159,10 @@ class MainWindow(QMainWindow):
         imgsize_layout = QVBoxLayout()
         imgsize_layout.addWidget(QLabel("Image Size"))
         self.imgsz_combo = QComboBox()
-        self.imgsz_combo.addItems(["640", "1280", "1920", "9024"])
-        if self.config.get("imgsz") in ["640", "1280", "1920", "9024"]:
-            self.imgsz_combo.setCurrentText(self.config.get("imgsz"))
+        self.imgsz_combo.addItems(["640", "1280", "1920", "9024", "12800"])
+        default_imgsz = self.config.get("imgsz") if self.config.get("imgsz") else "12800"
+        if default_imgsz in ["640", "1280", "1920", "9024", "12800"]:
+            self.imgsz_combo.setCurrentText(default_imgsz)
         imgsize_layout.addWidget(self.imgsz_combo)
         col2_layout.addLayout(imgsize_layout)
         
@@ -166,7 +170,8 @@ class MainWindow(QMainWindow):
         
         # KML checkbox
         self.kml_checkbox = QCheckBox("Convert to KML")
-        self.kml_checkbox.setChecked(self.config.get("convert_kml") == "true")
+        default_kml = self.config.get("convert_kml") if self.config.get("convert_kml") else "false"
+        self.kml_checkbox.setChecked(default_kml == "true")
         col2_layout.addWidget(self.kml_checkbox)
         
         layout.addLayout(col2_layout)
@@ -182,7 +187,8 @@ class MainWindow(QMainWindow):
         self.iou_slider = QDoubleSpinBox()
         self.iou_slider.setRange(0.0, 1.0)
         self.iou_slider.setSingleStep(0.1)
-        self.iou_slider.setValue(float(self.config.get("iou", 0.2)))
+        default_iou = float(self.config.get("iou", 0.2))
+        self.iou_slider.setValue(default_iou)
         
         iou_slider_layout.addWidget(self.iou_slider)
         iou_layout.addLayout(iou_slider_layout)
@@ -192,7 +198,8 @@ class MainWindow(QMainWindow):
         
         # SHP checkbox
         self.shp_checkbox = QCheckBox("Convert to SHP")
-        self.shp_checkbox.setChecked(self.config.get("convert_shp") == "true")
+        default_shp = self.config.get("convert_shp") if self.config.get("convert_shp") else "true"
+        self.shp_checkbox.setChecked(default_shp == "true")
         col3_layout.addWidget(self.shp_checkbox)
         
         layout.addLayout(col3_layout)
@@ -207,7 +214,8 @@ class MainWindow(QMainWindow):
         self.conf_slider = QDoubleSpinBox()
         self.conf_slider.setRange(0.0, 1.0)
         self.conf_slider.setSingleStep(0.1)
-        self.conf_slider.setValue(float(self.config.get("conf", 0.2)))
+        default_conf = float(self.config.get("conf", 0.2))
+        self.conf_slider.setValue(default_conf)
         
         conf_layout.addWidget(self.conf_slider)
         col4_layout.addLayout(conf_layout)
@@ -226,7 +234,8 @@ class MainWindow(QMainWindow):
         max_det_layout.addWidget(QLabel("Max Det"))
         self.max_det_input = QSpinBox()
         self.max_det_input.setRange(1, 50000)
-        self.max_det_input.setValue(int(self.config.get("max_det", 12000)))
+        default_max_det = int(self.config.get("max_det", 10000))
+        self.max_det_input.setValue(default_max_det)
         max_det_layout.addWidget(self.max_det_input)
         layout.addLayout(max_det_layout)
         
@@ -235,18 +244,21 @@ class MainWindow(QMainWindow):
         line_width_layout.addWidget(QLabel("Line Width"))
         self.line_width_input = QSpinBox()
         self.line_width_input.setRange(1, 10)
-        self.line_width_input.setValue(int(self.config.get("line_width", 3)))
+        default_line_width = int(self.config.get("line_width", 3))
+        self.line_width_input.setValue(default_line_width)
         line_width_layout.addWidget(self.line_width_input)
         layout.addLayout(line_width_layout)
         
         # Show Labels
         self.show_labels_checkbox = QCheckBox("Show Labels")
-        self.show_labels_checkbox.setChecked(self.config.get("show_labels") == "true")
+        default_show_labels = self.config.get("show_labels") if self.config.get("show_labels") else "false"
+        self.show_labels_checkbox.setChecked(default_show_labels == "true")
         layout.addWidget(self.show_labels_checkbox)
         
         # Show Threshold
         self.show_conf_checkbox = QCheckBox("Show Threshold")
-        self.show_conf_checkbox.setChecked(self.config.get("show_conf") == "true")
+        default_show_conf = self.config.get("show_conf") if self.config.get("show_conf") else "false"
+        self.show_conf_checkbox.setChecked(default_show_conf == "true")
         layout.addWidget(self.show_conf_checkbox)
         
         group.setLayout(layout)
@@ -328,7 +340,7 @@ class MainWindow(QMainWindow):
                 self.convert_button.setEnabled(True)
             else:
                 self.folder_path_label.setText("The folder does not contain any .tif files.")
-                self.select_folder_button.setText("+ Tambah Folder Tif")
+                self.select_folder_button.setText("Change Folder Tif")
                 self.convert_button.setEnabled(False)
     
     def start_conversion(self):
@@ -457,6 +469,6 @@ class MainWindow(QMainWindow):
             "show_labels": "true" if self.show_labels_checkbox.isChecked() else "false",
             "show_conf": "true" if self.show_conf_checkbox.isChecked() else "false",
             "status_blok": "Full Blok" if self.status_full_radio.isChecked() else "Setengah Blok",
-            "save_annotated": self.save_annotated_checkbox.isChecked(),
+            "save_annotated": "true" if self.save_annotated_checkbox.isChecked() else "false",
             "annotated_folder": os.path.join(self.selected_folder, "annotated") if self.selected_folder and self.save_annotated_checkbox.isChecked() else None
         }

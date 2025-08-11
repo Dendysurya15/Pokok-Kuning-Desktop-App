@@ -15,9 +15,9 @@ def setup_database():
     db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "database.db")
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
-    
     cursor.execute("PRAGMA foreign_keys = ON")
 
+    # Create the table first
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS configuration (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -31,9 +31,19 @@ def setup_database():
             line_width TEXT,
             show_labels TEXT,
             show_conf TEXT,
-            status_blok TEXT
+            status_blok TEXT,
+            save_annotated TEXT
         )
     ''')
+
+    # Check if save_annotated column exists
+    cursor.execute("PRAGMA table_info(configuration)")
+    columns = [column[1] for column in cursor.fetchall()]
+    
+    if 'save_annotated' not in columns:
+        # Add the new column to existing table
+        cursor.execute("ALTER TABLE configuration ADD COLUMN save_annotated TEXT DEFAULT 'true'")
+        print("Added save_annotated column to existing database")
 
     # Check if we already have configuration data
     cursor.execute("SELECT COUNT(*) FROM configuration")
@@ -47,8 +57,8 @@ def setup_database():
         cursor.execute('''
             INSERT INTO configuration (
                 model, imgsz, iou, conf, convert_shp, convert_kml, 
-                max_det, line_width, show_labels, show_conf, status_blok
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                max_det, line_width, show_labels, show_conf, status_blok, save_annotated
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             default_model,  # model
             "12800",       # imgsz - Changed from 1280 to 12800 to match CLI version
@@ -60,7 +70,8 @@ def setup_database():
             "3",           # line_width
             "false",       # show_labels
             "false",       # show_conf
-            "Full Blok"    # status_blok
+            "Full Blok",   # status_blok
+            "true"         # save_annotated - Default to true to match CLI behavior
         ))
     
     conn.commit()
@@ -90,7 +101,8 @@ def load_config():
         "line_width": row[8],
         "show_labels": row[9],
         "show_conf": row[10],
-        "status_blok": row[11]
+        "status_blok": row[11],
+        "save_annotated": row[12]
     }
     return config
 
@@ -103,8 +115,8 @@ def save_config(config):
     cursor.execute('''
         INSERT INTO configuration (
             model, imgsz, iou, conf, convert_shp, convert_kml,
-            max_det, line_width, show_labels, show_conf, status_blok
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            max_det, line_width, show_labels, show_conf, status_blok, save_annotated
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', (
         config["model"], 
         config["imgsz"], 
@@ -116,7 +128,8 @@ def save_config(config):
         config["line_width"],
         config["show_labels"], 
         config["show_conf"],
-        config["status_blok"]
+        config["status_blok"],
+        config["save_annotated"]
     ))
     
     conn.commit()
