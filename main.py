@@ -26,7 +26,7 @@ def validate_and_preprocess_image(image_path):
             
             # Handle different image modes
             if img.mode in ['RGBA', 'LA']:
-                # Remove alpha channel
+                # Remove alpha channelni 
                 img = img.convert('RGB')
                 print(f"  Converted from {original_mode} to RGB (removed alpha channel)")
             elif img.mode in ['L', 'P']:
