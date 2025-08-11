@@ -1,10 +1,11 @@
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, 
     QFileDialog, QCheckBox, QProgressBar, QComboBox, QSlider, QGroupBox, 
-    QRadioButton, QSpinBox, QMessageBox, QTextEdit, QDoubleSpinBox
+    QRadioButton, QSpinBox, QMessageBox, QTextEdit, QDoubleSpinBox,
+    QFrame, QSizePolicy
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, pyqtSlot, QTimer
-from PyQt5.QtGui import QFont, QPixmap, QPalette, QColor
+from PyQt5.QtGui import QFont, QPixmap, QPalette, QColor, QLinearGradient, QPainter
 
 import os
 import sys
@@ -13,6 +14,60 @@ import json
 
 from utils.config_manager import load_config, save_config, get_model_names
 from core.processor import ImageProcessor
+
+class ModernCard(QFrame):
+    """Custom modern card widget with rounded corners and shadow effect"""
+    def __init__(self, title="", icon_text=""):
+        super().__init__()
+        self.title = title
+        self.icon_text = icon_text
+        self.setup_ui()
+        
+    def setup_ui(self):
+        self.setFrameStyle(QFrame.Box)
+        self.setStyleSheet("""
+            QFrame {
+                background-color: white;
+                border: 1px solid #e0e0e0;
+                border-radius: 12px;
+                padding: 16px;
+            }
+        """)
+        
+        # Create title bar with icon
+        title_layout = QHBoxLayout()
+        if self.icon_text:
+            icon_label = QLabel(self.icon_text)
+            icon_label.setStyleSheet("""
+                QLabel {
+                    font-size: 18px;
+                    color: #2196F3;
+                    margin-right: 8px;
+                }
+            """)
+            title_layout.addWidget(icon_label)
+        
+        title_label = QLabel(self.title)
+        title_label.setStyleSheet("""
+            QLabel {
+                font-size: 16px;
+                font-weight: bold;
+                color: #333333;
+            }
+        """)
+        title_layout.addWidget(title_label)
+        title_layout.addStretch()
+        
+        # Create main content layout
+        self.content_layout = QVBoxLayout()
+        self.content_layout.addLayout(title_layout)
+        self.content_layout.addSpacing(16)
+        
+        self.setLayout(self.content_layout)
+    
+    def add_content(self, widget):
+        """Add content widget to the card"""
+        self.content_layout.addWidget(widget)
 
 class ProcessingThread(QThread):
     """Thread for running the image processing in the background"""
@@ -45,21 +100,51 @@ class MainWindow(QMainWindow):
     def init_ui(self):
         # Set window properties
         self.setWindowTitle("Pokok Kuning Desktop App")
-        self.setGeometry(100, 100, 900, 700)
+        self.setGeometry(100, 100, 1000, 800)
+        self.setStyleSheet("""
+            QMainWindow {
+                background-color: #f5f5f5;
+            }
+        """)
         
         # Create central widget and layout
         central_widget = QWidget()
         main_layout = QVBoxLayout(central_widget)
+        main_layout.setContentsMargins(20, 20, 20, 20)
+        main_layout.setSpacing(20)
         self.setCentralWidget(central_widget)
         
         # Load configuration
         self.config = load_config()
         
-        # Create UI components
-        self.create_folder_selection_section(main_layout)
-        self.create_configuration_section(main_layout)
-        self.create_annotated_section(main_layout)
-        self.create_save_config_button(main_layout)
+        # Create header
+        self.create_header(main_layout)
+        
+        # Create main content area with cards
+        content_layout = QHBoxLayout()
+        
+        # Left column
+        left_column = QVBoxLayout()
+        left_column.setSpacing(20)
+        
+        # Folder Selection Card
+        self.create_folder_selection_card(left_column)
+        
+        # Annotation Settings Card
+        self.create_annotation_settings_card(left_column)
+        
+        content_layout.addLayout(left_column)
+        
+        # Right column
+        right_column = QVBoxLayout()
+        right_column.setSpacing(20)
+        
+        # AI Model Configuration Card
+        self.create_ai_model_config_card(right_column)
+        
+        content_layout.addLayout(right_column)
+        
+        main_layout.addLayout(content_layout)
         
         # Create progress dialog (hidden initially)
         self.create_progress_section()
@@ -72,71 +157,156 @@ class MainWindow(QMainWindow):
         self.total_abnormal = 0
         self.total_normal = 0
         
-    def create_folder_selection_section(self, parent_layout):
-        group = QGroupBox("Folder Selection")
-        layout = QVBoxLayout()
+    def create_header(self, parent_layout):
+        """Create modern header with gradient background"""
+        header_widget = QWidget()
+        header_widget.setStyleSheet("""
+            QWidget {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, 
+                    stop:0 #2196F3, stop:1 #1976D2);
+                border-radius: 12px;
+                padding: 20px;
+            }
+        """)
+        header_widget.setFixedHeight(80)
         
-        # Folder selection button and path display
-        button_layout = QHBoxLayout()
-        self.select_folder_button = QPushButton("Change Folder Tif")
-        self.select_folder_button.clicked.connect(self.select_folder)
-        button_layout.addWidget(self.select_folder_button)
-        button_layout.addStretch()
-        layout.addLayout(button_layout)
+        header_layout = QHBoxLayout(header_widget)
+        header_layout.setContentsMargins(20, 20, 20, 20)
         
-        self.folder_path_label = QLabel("Selected Folder: None")
-        layout.addWidget(self.folder_path_label)
+        # App title
+        title_label = QLabel("Pokok Kuning Desktop App")
+        title_label.setStyleSheet("""
+            QLabel {
+                color: white;
+                font-size: 24px;
+                font-weight: bold;
+            }
+        """)
+        header_layout.addWidget(title_label)
+        header_layout.addStretch()
         
-        # Conversion options
-        options_layout = QHBoxLayout()
-        self.convert_button = QPushButton("Convert to SHP")
-        self.convert_button.clicked.connect(self.start_conversion)
-        self.convert_button.setEnabled(False)
-        options_layout.addWidget(self.convert_button)
+        parent_layout.addWidget(header_widget)
         
+    def create_folder_selection_card(self, parent_layout):
+        """Create modern folder selection card"""
+        card = ModernCard("Folder Selection", "📁")
+        
+        # Folder input area
+        folder_input_layout = QHBoxLayout()
+        
+        self.folder_path_input = QLabel("No folder selected")
+        self.folder_path_input.setStyleSheet("""
+            QLabel {
+                border: 2px dashed #cccccc;
+                border-radius: 8px;
+                padding: 12px;
+                background-color: #fafafa;
+                color: #666666;
+                min-height: 20px;
+            }
+        """)
+        folder_input_layout.addWidget(self.folder_path_input)
+        
+        browse_button = QPushButton("Browse")
+        browse_button.setStyleSheet("""
+            QPushButton {
+                background-color: #2196F3;
+                color: white;
+                border: none;
+                border-radius: 8px;
+                padding: 12px 20px;
+                font-weight: bold;
+                min-width: 80px;
+            }
+            QPushButton:hover {
+                background-color: #1976D2;
+            }
+            QPushButton:pressed {
+                background-color: #0D47A1;
+            }
+        """)
+        browse_button.clicked.connect(self.select_folder)
+        folder_input_layout.addWidget(browse_button)
+        
+        card.add_content(self.create_layout_widget(folder_input_layout))
+        
+        # Save annotated file checkbox
         self.save_annotated_checkbox = QCheckBox("Save Annotated File")
+        self.save_annotated_checkbox.setStyleSheet("""
+            QCheckBox {
+                font-size: 14px;
+                color: #333333;
+                spacing: 8px;
+            }
+            QCheckBox::indicator {
+                width: 18px;
+                height: 18px;
+                border: 2px solid #2196F3;
+                border-radius: 4px;
+            }
+            QCheckBox::indicator:checked {
+                background-color: #2196F3;
+                image: url(data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTIiIGhlaWdodD0iOSIgdmlld0JveD0iMCAwIDEyIDkiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxwYXRoIGQ9Ik0xIDQuNUw0LjUgOEwxMSAxIiBzdHJva2U9IndoaXRlIiBzdHJva2Utd2lkdGg9IjIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPgo8L3N2Zz4K);
+            }
+        """)
         default_save_annotated = self.config.get("save_annotated") if self.config.get("save_annotated") else "true"
         self.save_annotated_checkbox.setChecked(default_save_annotated == "true")
-        options_layout.addWidget(self.save_annotated_checkbox)
+        card.add_content(self.save_annotated_checkbox)
         
-        self.result_button = QPushButton("Result Converted")
-        self.result_button.clicked.connect(self.show_results)
-        self.result_button.setEnabled(False)
-        options_layout.addWidget(self.result_button)
+        # Results area
+        results_label = QLabel("Results will appear here after conversion")
+        results_label.setStyleSheet("""
+            QLabel {
+                border: 2px dashed #cccccc;
+                border-radius: 8px;
+                padding: 20px;
+                background-color: #fafafa;
+                color: #999999;
+                text-align: center;
+                min-height: 60px;
+            }
+        """)
+        results_label.setAlignment(Qt.AlignCenter)
+        card.add_content(results_label)
         
-        layout.addLayout(options_layout)
+        parent_layout.addWidget(card)
         
-        self.conversion_message = QLabel("")
-        self.conversion_message.setStyleSheet("color: green;")
-        layout.addWidget(self.conversion_message)
+    def create_ai_model_config_card(self, parent_layout):
+        """Create modern AI model configuration card"""
+        card = ModernCard("AI Model Configuration", "🔧")
         
-        group.setLayout(layout)
-        parent_layout.addWidget(group)
-        
-    def create_configuration_section(self, parent_layout):
-        group = QGroupBox("KONFIGURASI SISTEM")
-        layout = QHBoxLayout()
-        
-        # Column 1: Model and Status
-        col1_layout = QVBoxLayout()
-        
-        # Model selection
-        model_layout = QVBoxLayout()
-        model_layout.addWidget(QLabel("Model AI"))
-        self.model_combo = QComboBox()
+        # Model AI dropdown
+        model_layout = self.create_labeled_widget("Model AI", QComboBox())
+        self.model_combo = model_layout.findChild(QComboBox)
         model_names = get_model_names()
         self.model_combo.addItems(model_names)
         default_model = self.config.get("model") if self.config.get("model") else "yolov8n-pokok-kuning"
         if default_model in model_names:
             self.model_combo.setCurrentText(default_model)
-        model_layout.addWidget(self.model_combo)
-        col1_layout.addLayout(model_layout)
+        self.model_combo.setStyleSheet("""
+            QComboBox {
+                border: 2px solid #e0e0e0;
+                border-radius: 8px;
+                padding: 8px 12px;
+                background-color: white;
+                min-height: 20px;
+            }
+            QComboBox::drop-down {
+                border: none;
+                width: 20px;
+            }
+            QComboBox::down-arrow {
+                image: url(data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTIiIGhlaWdodD0iOCIgdmlld0JveD0iMCAwIDEyIDgiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxwYXRoIGQ9Ik0xIDFMNiA2TDExIDEiIHN0cm9rZT0iIzMzMyIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiLz4KPC9zdmc+);
+            }
+        """)
+        card.add_content(model_layout)
         
-        col1_layout.addSpacing(10)
+        # Status Blok radio buttons
+        status_label = QLabel("Status Blok")
+        status_label.setStyleSheet("font-weight: bold; color: #333333; margin-top: 16px;")
+        card.add_content(status_label)
         
-        # Status Blok
-        status_layout = QVBoxLayout()
-        status_layout.addWidget(QLabel("Status Blok"))
+        status_layout = QHBoxLayout()
         self.status_full_radio = QRadioButton("Full Blok")
         self.status_half_radio = QRadioButton("Setengah Blok")
         
@@ -146,139 +316,234 @@ class MainWindow(QMainWindow):
         else:
             self.status_half_radio.setChecked(True)
             
-        status_layout.addWidget(self.status_full_radio)
-        status_layout.addWidget(self.status_half_radio)
-        col1_layout.addLayout(status_layout)
+        for radio in [self.status_full_radio, self.status_half_radio]:
+            radio.setStyleSheet("""
+                QRadioButton {
+                    font-size: 14px;
+                    color: #333333;
+                    spacing: 8px;
+                }
+                QRadioButton::indicator {
+                    width: 18px;
+                    height: 18px;
+                    border: 2px solid #2196F3;
+                    border-radius: 9px;
+                }
+                QRadioButton::indicator:checked {
+                    background-color: #2196F3;
+                    border: 2px solid #2196F3;
+                }
+            """)
+            status_layout.addWidget(radio)
         
-        layout.addLayout(col1_layout)
+        card.add_content(self.create_layout_widget(status_layout))
         
-        # Column 2: Image Size and KML
-        col2_layout = QVBoxLayout()
-        
-        # Image size
-        imgsize_layout = QVBoxLayout()
-        imgsize_layout.addWidget(QLabel("Image Size"))
-        self.imgsz_combo = QComboBox()
+        # Image Size dropdown
+        imgsize_layout = self.create_labeled_widget("Image Size", QComboBox())
+        self.imgsz_combo = imgsize_layout.findChild(QComboBox)
         self.imgsz_combo.addItems(["640", "1280", "1920", "9024", "12800"])
         default_imgsz = self.config.get("imgsz") if self.config.get("imgsz") else "12800"
         if default_imgsz in ["640", "1280", "1920", "9024", "12800"]:
             self.imgsz_combo.setCurrentText(default_imgsz)
-        imgsize_layout.addWidget(self.imgsz_combo)
-        col2_layout.addLayout(imgsize_layout)
-        
-        col2_layout.addSpacing(10)
-        
-        # KML checkbox
-        self.kml_checkbox = QCheckBox("Convert to KML")
-        default_kml = self.config.get("convert_kml") if self.config.get("convert_kml") else "false"
-        self.kml_checkbox.setChecked(default_kml == "true")
-        col2_layout.addWidget(self.kml_checkbox)
-        
-        layout.addLayout(col2_layout)
-        
-        # Column 3: IOU Threshold and SHP
-        col3_layout = QVBoxLayout()
+        self.imgsz_combo.setStyleSheet("""
+            QComboBox {
+                border: 2px solid #e0e0e0;
+                border-radius: 8px;
+                padding: 8px 12px;
+                background-color: white;
+                min-height: 20px;
+            }
+        """)
+        card.add_content(imgsize_layout)
         
         # IOU Threshold
-        iou_layout = QVBoxLayout()
-        iou_layout.addWidget(QLabel("IOU Threshold"))
-        iou_slider_layout = QHBoxLayout()
-        
-        self.iou_slider = QDoubleSpinBox()
+        iou_layout = self.create_labeled_widget("IOU Threshold", QDoubleSpinBox())
+        self.iou_slider = iou_layout.findChild(QDoubleSpinBox)
         self.iou_slider.setRange(0.0, 1.0)
         self.iou_slider.setSingleStep(0.1)
         default_iou = float(self.config.get("iou", 0.2))
         self.iou_slider.setValue(default_iou)
+        self.iou_slider.setStyleSheet("""
+            QDoubleSpinBox {
+                border: 2px solid #e0e0e0;
+                border-radius: 8px;
+                padding: 8px 12px;
+                background-color: white;
+                min-height: 20px;
+            }
+        """)
+        card.add_content(iou_layout)
         
-        iou_slider_layout.addWidget(self.iou_slider)
-        iou_layout.addLayout(iou_slider_layout)
-        col3_layout.addLayout(iou_layout)
+        # Conversion checkboxes
+        conversion_layout = QHBoxLayout()
         
-        col3_layout.addSpacing(10)
+        self.kml_checkbox = QCheckBox("Convert to KML")
+        default_kml = self.config.get("convert_kml") if self.config.get("convert_kml") else "false"
+        self.kml_checkbox.setChecked(default_kml == "true")
         
-        # SHP checkbox
         self.shp_checkbox = QCheckBox("Convert to SHP")
         default_shp = self.config.get("convert_shp") if self.config.get("convert_shp") else "true"
         self.shp_checkbox.setChecked(default_shp == "true")
-        col3_layout.addWidget(self.shp_checkbox)
         
-        layout.addLayout(col3_layout)
+        for checkbox in [self.kml_checkbox, self.shp_checkbox]:
+            checkbox.setStyleSheet("""
+                QCheckBox {
+                    font-size: 14px;
+                    color: #333333;
+                    spacing: 8px;
+                }
+                QCheckBox::indicator {
+                    width: 18px;
+                    height: 18px;
+                    border: 2px solid #2196F3;
+                    border-radius: 4px;
+                }
+                QCheckBox::indicator:checked {
+                    background-color: #2196F3;
+                }
+            """)
+            conversion_layout.addWidget(checkbox)
         
-        # Column 4: Confidence Threshold
-        col4_layout = QVBoxLayout()
+        card.add_content(self.create_layout_widget(conversion_layout))
         
         # Confidence Threshold
-        conf_layout = QVBoxLayout()
-        conf_layout.addWidget(QLabel("Confidence Threshold"))
-        
-        self.conf_slider = QDoubleSpinBox()
+        conf_layout = self.create_labeled_widget("Confidence Threshold", QDoubleSpinBox())
+        self.conf_slider = conf_layout.findChild(QDoubleSpinBox)
         self.conf_slider.setRange(0.0, 1.0)
         self.conf_slider.setSingleStep(0.1)
         default_conf = float(self.config.get("conf", 0.2))
         self.conf_slider.setValue(default_conf)
+        self.conf_slider.setStyleSheet("""
+            QDoubleSpinBox {
+                border: 2px solid #e0e0e0;
+                border-radius: 8px;
+                padding: 8px 12px;
+                background-color: white;
+                min-height: 20px;
+            }
+        """)
+        card.add_content(conf_layout)
         
-        conf_layout.addWidget(self.conf_slider)
-        col4_layout.addLayout(conf_layout)
+        parent_layout.addWidget(card)
         
-        layout.addLayout(col4_layout)
+    def create_annotation_settings_card(self, parent_layout):
+        """Create modern annotation settings card"""
+        card = ModernCard("Annotation Settings", "✏️")
         
-        group.setLayout(layout)
-        parent_layout.addWidget(group)
-    
-    def create_annotated_section(self, parent_layout):
-        group = QGroupBox("KONFIGURASI SAVE ANNOTATED IMAGE")
-        layout = QHBoxLayout()
-        
-        # Max Det
-        max_det_layout = QVBoxLayout()
-        max_det_layout.addWidget(QLabel("Max Det"))
-        self.max_det_input = QSpinBox()
+        # Max Detection
+        max_det_layout = self.create_labeled_widget("Max Detection", QSpinBox())
+        self.max_det_input = max_det_layout.findChild(QSpinBox)
         self.max_det_input.setRange(1, 50000)
         default_max_det = int(self.config.get("max_det", 10000))
         self.max_det_input.setValue(default_max_det)
-        max_det_layout.addWidget(self.max_det_input)
-        layout.addLayout(max_det_layout)
+        self.max_det_input.setStyleSheet("""
+            QSpinBox {
+                border: 2px solid #e0e0e0;
+                border-radius: 8px;
+                padding: 8px 12px;
+                background-color: white;
+                min-height: 20px;
+            }
+        """)
+        card.add_content(max_det_layout)
         
         # Line Width
-        line_width_layout = QVBoxLayout()
-        line_width_layout.addWidget(QLabel("Line Width"))
-        self.line_width_input = QSpinBox()
+        line_width_layout = self.create_labeled_widget("Line Width", QSpinBox())
+        self.line_width_input = line_width_layout.findChild(QSpinBox)
         self.line_width_input.setRange(1, 10)
         default_line_width = int(self.config.get("line_width", 3))
         self.line_width_input.setValue(default_line_width)
-        line_width_layout.addWidget(self.line_width_input)
-        layout.addLayout(line_width_layout)
+        self.line_width_input.setStyleSheet("""
+            QSpinBox {
+                border: 2px solid #e0e0e0;
+                border-radius: 8px;
+                padding: 8px 12px;
+                background-color: white;
+                min-height: 20px;
+            }
+        """)
+        card.add_content(line_width_layout)
         
-        # Show Labels
+        # Display checkboxes
+        display_layout = QHBoxLayout()
+        
         self.show_labels_checkbox = QCheckBox("Show Labels")
         default_show_labels = self.config.get("show_labels") if self.config.get("show_labels") else "true"
         self.show_labels_checkbox.setChecked(default_show_labels == "true")
-        layout.addWidget(self.show_labels_checkbox)
         
-        # Show Threshold
         self.show_conf_checkbox = QCheckBox("Show Threshold")
         default_show_conf = self.config.get("show_conf") if self.config.get("show_conf") else "false"
         self.show_conf_checkbox.setChecked(default_show_conf == "true")
-        layout.addWidget(self.show_conf_checkbox)
         
-        group.setLayout(layout)
-        parent_layout.addWidget(group)
-    
-    def create_save_config_button(self, parent_layout):
-        layout = QHBoxLayout()
+        for checkbox in [self.show_labels_checkbox, self.show_conf_checkbox]:
+            checkbox.setStyleSheet("""
+                QCheckBox {
+                    font-size: 14px;
+                    color: #333333;
+                    spacing: 8px;
+                }
+                QCheckBox::indicator {
+                    width: 18px;
+                    height: 18px;
+                    border: 2px solid #2196F3;
+                    border-radius: 4px;
+                }
+                QCheckBox::indicator:checked {
+                    background-color: #2196F3;
+                }
+            """)
+            display_layout.addWidget(checkbox)
         
-        self.save_config_button = QPushButton("Simpan Konfigurasi")
-        self.save_config_button.clicked.connect(self.save_configuration)
-        layout.addWidget(self.save_config_button)
+        card.add_content(self.create_layout_widget(display_layout))
         
-        self.save_message = QLabel("")
-        self.save_message.setStyleSheet("color: green;")
-        layout.addWidget(self.save_message)
+        # Start Processing button
+        start_button = QPushButton("🚀 Start Processing")
+        start_button.setStyleSheet("""
+            QPushButton {
+                background-color: #4CAF50;
+                color: white;
+                border: none;
+                border-radius: 8px;
+                padding: 16px 24px;
+                font-size: 16px;
+                font-weight: bold;
+                margin-top: 16px;
+            }
+            QPushButton:hover {
+                background-color: #45a049;
+            }
+            QPushButton:pressed {
+                background-color: #3d8b40;
+            }
+        """)
+        start_button.clicked.connect(self.start_conversion)
+        card.add_content(start_button)
         
-        layout.addStretch()
+        parent_layout.addWidget(card)
         
-        parent_layout.addLayout(layout)
-    
+    def create_labeled_widget(self, label_text, widget):
+        """Create a labeled widget with consistent styling"""
+        layout = QVBoxLayout()
+        
+        label = QLabel(label_text)
+        label.setStyleSheet("""
+            QLabel {
+                font-weight: bold;
+                color: #333333;
+                margin-bottom: 8px;
+            }
+        """)
+        layout.addWidget(label)
+        layout.addWidget(widget)
+        
+        return self.create_layout_widget(layout)
+        
+    def create_layout_widget(self, layout):
+        """Create a widget from a layout"""
+        widget = QWidget()
+        widget.setLayout(layout)
+        return widget
+
     def create_progress_section(self):
         self.progress_dialog = QWidget(self)
         self.progress_dialog.setWindowFlags(Qt.Window | Qt.WindowTitleHint | Qt.CustomizeWindowHint)
@@ -335,13 +600,31 @@ class MainWindow(QMainWindow):
             has_tiff_files = any(f.lower().endswith(('.tif', '.tiff')) for f in os.listdir(folder_path))
             
             if has_tiff_files:
-                self.folder_path_label.setText(f"Selected Folder: {folder_path}")
-                self.select_folder_button.setText("Change Folder Tif")
-                self.convert_button.setEnabled(True)
+                self.folder_path_input.setText(f"Selected Folder: {folder_path}")
+                self.folder_path_input.setStyleSheet("""
+                    QLabel {
+                        border: 2px solid #2196F3;
+                        border-radius: 8px;
+                        padding: 12px;
+                        background-color: #e3f2fd;
+                        color: #1976D2;
+                        min-height: 20px;
+                    }
+                """)
+                self.save_annotated_checkbox.setEnabled(True)
             else:
-                self.folder_path_label.setText("The folder does not contain any .tif files.")
-                self.select_folder_button.setText("Change Folder Tif")
-                self.convert_button.setEnabled(False)
+                self.folder_path_input.setText("The folder does not contain any .tif files.")
+                self.folder_path_input.setStyleSheet("""
+                    QLabel {
+                        border: 2px dashed #cccccc;
+                        border-radius: 8px;
+                        padding: 12px;
+                        background-color: #fafafa;
+                        color: #666666;
+                        min-height: 20px;
+                    }
+                """)
+                self.save_annotated_checkbox.setEnabled(False)
     
     def start_conversion(self):
         if not self.selected_folder:
@@ -416,14 +699,17 @@ class MainWindow(QMainWindow):
         
         # Show completion message
         folder_name = os.path.basename(self.selected_folder)
-        self.conversion_message.setText(f"The folder '{folder_name}' has been converted successfully.")
         
-        # Enable the result button
-        self.result_button.setEnabled(True)
+        # Create a temporary message label for completion
+        completion_msg = QLabel(f"The folder '{folder_name}' has been converted successfully.")
+        completion_msg.setStyleSheet("color: green; font-weight: bold; padding: 10px;")
+        
+        # Show completion message in a popup
+        QMessageBox.information(self, "Conversion Complete", 
+                              f"The folder '{folder_name}' has been converted successfully!")
         
         # Hide progress dialog after 3 seconds
-        QThread.sleep(3)
-        self.progress_dialog.hide()
+        QTimer.singleShot(3000, self.progress_dialog.hide)
     
     def show_results(self):
         msg = QMessageBox()
@@ -451,10 +737,8 @@ class MainWindow(QMainWindow):
     def save_configuration(self):
         config = self.get_current_config()
         if save_config(config):
-            self.save_message.setText("Configuration has been saved successfully!")
-            
-            # Hide message after 3 seconds
-            QTimer.singleShot(3000, lambda: self.save_message.setText(""))
+            # Show success message in a popup
+            QMessageBox.information(self, "Success", "Configuration has been saved successfully!")
     
     def get_current_config(self):
         return {
