@@ -1,0 +1,435 @@
+import os
+import time
+import json
+import gc
+from pathlib import Path
+from PIL import Image
+import numpy as np
+import cv2
+import geojson
+from shapely.geometry import Point, mapping
+import geopandas as gpd
+from fastkml import kml, geometry
+
+class ImageProcessor:
+    def __init__(self):
+        self.model = None
+    
+    def process_folder(self, folder_path, config, progress_callback=None):
+        """Process all images in the folder based on configuration"""
+        start_time = time.time()
+        
+        # Load model
+        model_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 
+                                "model", f"{config['model']}.pt")
+        
+        try:
+            from ultralytics import YOLO
+            self.model = YOLO(model_path)
+        except Exception as e:
+            return {
+                "error": f"Failed to load model: {str(e)}",
+                "successful_processed": 0,
+                "failed_processed": 0,
+                "total_files": 0
+            }
+        
+        # Get image files
+        image_extensions = ('.png', '.jpg', '.jpeg', '.tif', '.tiff', '.bmp')
+        image_files = [f for f in os.listdir(folder_path) if f.lower().endswith(image_extensions)]
+        total_files = len(image_files)
+        
+        successful_processed = 0
+        failed_processed = 0
+        processing_times = []
+        total_abnormal = 0
+        total_normal = 0
+        
+        for index, image_file in enumerate(image_files):
+            file_start_time = time.time()
+            image_path = os.path.join(folder_path, image_file)
+            
+            try:
+                # Detect objects
+                detected_objects, counts = self.detect_objects(
+                    image_path, 
+                    int(config.get("imgsz", 1280)), 
+                    float(config.get("conf", 0.2)), 
+                    float(config.get("iou", 0.2)),
+                    save_annotated=config.get("save_annotated", False),
+                    annotated_folder=os.path.join(folder_path, "annotated") if config.get("save_annotated", False) else None
+                )
+                
+                if detected_objects is None:
+                    failed_processed += 1
+                    continue
+                
+                # Load JGW file
+                base_name = os.path.splitext(image_path)[0]
+                jgw_file = base_name + ".tfw"
+                jgw_params = self.read_jgw(jgw_file)
+                
+                if jgw_params is None:
+                    failed_processed += 1
+                    continue
+                
+                # Create and save GeoJSON
+                labels = self.model.names
+                feature_collection = self.create_geojson(detected_objects, jgw_params, labels)
+                geojson_output_path = self.save_geojson(feature_collection, image_path)
+                
+                if geojson_output_path is None:
+                    failed_processed += 1
+                    continue
+                
+                # Convert to other formats if requested
+                if config.get("convert_kml") == "true":
+                    kml_output_path = geojson_output_path.replace('.geojson', '.kml')
+                    self.convert_geojson_to_kml(geojson_output_path, kml_output_path)
+                
+                if config.get("convert_shp") == "true":
+                    shp_output_path = geojson_output_path.replace('.geojson', '.shp')
+                    self.convert_geojson_to_shp(geojson_output_path, shp_output_path)
+                
+                successful_processed += 1
+                
+                # Calculate timing
+                file_end_time = time.time()
+                file_duration = file_end_time - file_start_time
+                processing_times.append(file_duration)
+                avg_time = sum(processing_times) / len(processing_times)
+                
+                # Update abnormal and normal counts
+                abnormal_count = counts.get("abnormal_count", 0)
+                normal_count = counts.get("normal_count", 0)
+                total_abnormal += abnormal_count
+                total_normal += normal_count
+                
+                # Progress reporting
+                if progress_callback:
+                    progress = {
+                        "processed": index + 1,
+                        "total": total_files,
+                        "successful": successful_processed,
+                        "failed": failed_processed,
+                        "current_file": image_file,
+                        "status": "Processed successfully",
+                        "file_duration": f"{file_duration:.2f}s",
+                        "avg_time_per_file": f"{avg_time:.2f}s",
+                        "abnormal_count": abnormal_count,
+                        "normal_count": normal_count,
+                        "image_info": counts.get("image_size", "unknown")
+                    }
+                    progress_callback(progress)
+                
+                # Memory cleanup every 10 files
+                if (index + 1) % 10 == 0:
+                    gc.collect()
+                    
+            except Exception as e:
+                failed_processed += 1
+                if progress_callback:
+                    progress_callback({
+                        "processed": index + 1,
+                        "total": total_files,
+                        "successful": successful_processed,
+                        "failed": failed_processed,
+                        "current_file": image_file,
+                        "status": f"Error: {str(e)}",
+                        "abnormal_count": 0,
+                        "normal_count": 0
+                    })
+        
+        end_time = time.time()
+        
+        return {
+            "successful_processed": successful_processed,
+            "failed_processed": failed_processed,
+            "total_files": total_files,
+            "total_time": end_time - start_time,
+            "total_abnormal": total_abnormal,
+            "total_normal": total_normal
+        }
+    
+    def validate_and_preprocess_image(self, image_path):
+        """Validate image and ensure consistent format"""
+        try:
+            with Image.open(image_path) as img:
+                original_mode = img.mode
+                width, height = img.size
+                
+                # Handle different image modes
+                if img.mode in ['RGBA', 'LA']:
+                    # Remove alpha channel
+                    img = img.convert('RGB')
+                elif img.mode in ['L', 'P']:
+                    # Convert grayscale or palette to RGB
+                    img = img.convert('RGB')
+                elif img.mode == 'CMYK':
+                    # Convert CMYK to RGB
+                    img = img.convert('RGB')
+                elif img.mode != 'RGB':
+                    # Any other mode, convert to RGB
+                    img = img.convert('RGB')
+                
+                # Save the converted image temporarily for YOLO processing
+                temp_path = None
+                if original_mode != 'RGB':
+                    base_name = os.path.splitext(image_path)[0]
+                    temp_path = base_name + "_temp_rgb.jpg"
+                    img.save(temp_path, 'JPEG', quality=95)
+                
+                return True, width, height, img.mode, temp_path
+                    
+        except Exception as e:
+            return False, 0, 0, None, None
+    
+    def detect_objects(self, image_path, imgsz, conf, iou, classes=None, save_annotated=False, annotated_folder=None):
+        """Object detection with error handling and optional annotation saving"""
+        temp_image_path = None
+        try:
+            # Validate image first
+            is_valid, width, height, mode, temp_path = self.validate_and_preprocess_image(image_path)
+            if not is_valid:
+                return None, {"abnormal_count": 0, "normal_count": 0, "error": "Invalid image"}
+            
+            # Use the temporary RGB image if one was created
+            processing_path = temp_path if temp_path else image_path
+            temp_image_path = temp_path  # Keep track for cleanup
+            
+            # Use smaller max_det to reduce memory usage
+            results = self.model.predict(
+                source=processing_path, 
+                imgsz=imgsz, 
+                conf=conf, 
+                iou=iou, 
+                classes=classes, 
+                max_det=10000,
+                verbose=False  # Reduce console output
+            )
+            
+            abnormal_count = 0
+            normal_count = 0
+    
+            for result in results:
+                if result.boxes is not None:
+                    for detection in result.boxes:
+                        class_id = int(detection.cls)
+                        if class_id == 0:  # Assuming class 0 is abnormal
+                            abnormal_count += 1
+                        elif class_id == 1:  # Assuming class 1 is normal
+                            normal_count += 1
+            
+            # Save annotated frame if requested
+            if save_annotated and annotated_folder and results:
+                self.save_annotated_frame(results[0], image_path, annotated_folder, self.model.names)
+            
+            progress = {
+                "abnormal_count": abnormal_count,
+                "normal_count": normal_count,
+                "image_size": f"{width}x{height}",
+                "image_mode": mode,
+                "converted": temp_path is not None
+            }
+    
+            return results, progress
+            
+        except Exception as e:
+            error_progress = {
+                "abnormal_count": 0,
+                "normal_count": 0,
+                "error": str(e)
+            }
+            return None, error_progress
+        
+        finally:
+            # Clean up temporary file
+            if temp_image_path and os.path.exists(temp_image_path):
+                try:
+                    os.remove(temp_image_path)
+                except Exception:
+                    pass
+    
+    def save_annotated_frame(self, result, original_image_path, annotated_folder, class_names):
+        """Save annotated frame with bounding boxes and labels"""
+        try:
+            # Create annotated folder if it doesn't exist
+            os.makedirs(annotated_folder, exist_ok=True)
+            
+            # Load original image
+            image = cv2.imread(original_image_path)
+            if image is None:
+                return
+            
+            # Define colors for different classes (BGR format for OpenCV)
+            colors = {
+                0: (0, 0, 255),    # Red for abnormal
+                1: (0, 255, 0),    # Green for normal
+                2: (255, 0, 0),    # Blue for other classes
+                3: (0, 255, 255),  # Cyan
+                4: (255, 0, 255),  # Magenta
+                5: (255, 255, 0),  # Yellow
+            }
+            
+            # Draw bounding boxes and labels
+            if result.boxes is not None:
+                for detection in result.boxes:
+                    # Get coordinates
+                    x1, y1, x2, y2 = detection.xyxy[0].cpu().numpy().astype(int)
+                    
+                    # Get class info
+                    class_id = int(detection.cls)
+                    confidence = float(detection.conf)
+                    class_name = class_names.get(class_id, f"class_{class_id}")
+                    
+                    # Choose color
+                    color = colors.get(class_id, (128, 128, 128))  # Default gray
+                    
+                    # Draw bounding box
+                    cv2.rectangle(image, (x1, y1), (x2, y2), color, 2)
+                    
+                    # Prepare label text
+                    label = f"{class_name}: {confidence:.2f}"
+                    
+                    # Get text size for background rectangle
+                    (text_width, text_height), baseline = cv2.getTextSize(
+                        label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2
+                    )
+                    
+                    # Draw background rectangle for text
+                    cv2.rectangle(
+                        image, 
+                        (x1, y1 - text_height - 10), 
+                        (x1 + text_width, y1), 
+                        color, 
+                        -1
+                    )
+                    
+                    # Draw text
+                    cv2.putText(
+                        image, 
+                        label, 
+                        (x1, y1 - 5), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 
+                        0.6, 
+                        (255, 255, 255), 
+                        2
+                    )
+            
+            # Save annotated image
+            base_name = os.path.splitext(os.path.basename(original_image_path))[0]
+            output_path = os.path.join(annotated_folder, f"{base_name}_annotated.jpg")
+            
+            # Handle duplicate names
+            counter = 1
+            while os.path.exists(output_path):
+                output_path = os.path.join(annotated_folder, f"{base_name}_annotated_{counter}.jpg")
+                counter += 1
+            
+            # Save the image
+            cv2.imwrite(output_path, image)
+                
+        except Exception:
+            pass
+    
+    def read_jgw(self, jgw_file):
+        """Read JGW file with error handling"""
+        try:
+            with open(jgw_file) as f:
+                params = f.readlines()
+            return [float(param.strip()) for param in params]
+        except FileNotFoundError:
+            return None
+        except Exception:
+            return None
+    
+    def image_to_map_coords(self, x, y, pixel_size_x, pixel_size_y, upper_left_x, upper_left_y):
+        """Convert image coordinates to map coordinates"""
+        map_x = upper_left_x + x * pixel_size_x
+        map_y = upper_left_y + y * pixel_size_y
+        return map_x, map_y
+    
+    def create_geojson(self, detected_objects, jgw_params, labels):
+        """Create a GeoJSON feature collection from detected objects"""
+        if detected_objects is None or jgw_params is None:
+            return geojson.FeatureCollection([])
+            
+        pixel_size_x, rotation_x, rotation_y, pixel_size_y, upper_left_x, upper_left_y = jgw_params
+        features = []
+        
+        for result in detected_objects:
+            if result.boxes is not None:
+                for detection in result.boxes:
+                    try:
+                        x1, y1, x2, y2 = detection.xyxy[0].cpu().numpy()
+                        center_x, center_y = (x1 + x2) / 2, (y1 + y2) / 2
+                        map_x, map_y = self.image_to_map_coords(center_x, center_y, pixel_size_x, pixel_size_y, upper_left_x, upper_left_y)
+                        point = Point(map_x, map_y)
+                        
+                        class_id = int(detection.cls)
+                        label = labels.get(class_id, f"class_{class_id}")
+                        
+                        feature = geojson.Feature(
+                            geometry=mapping(point), 
+                            properties={
+                                "label": label,
+                                "confidence": float(detection.conf.cpu().numpy()),
+                                "class_id": class_id
+                            }
+                        )
+                        features.append(feature)
+                    except Exception:
+                        continue
+                        
+        return geojson.FeatureCollection(features)
+    
+    def save_geojson(self, feature_collection, input_image_path):
+        """Save GeoJSON to file"""
+        base_name = os.path.splitext(os.path.basename(input_image_path))[0]
+        output_path = os.path.join(os.path.dirname(input_image_path), base_name + ".geojson")
+        
+        counter = 1
+        while os.path.exists(output_path):
+            output_path = os.path.join(os.path.dirname(input_image_path), f"{base_name}_{counter}.geojson")
+            counter += 1
+        
+        try:
+            with open(output_path, "w") as f:
+                geojson.dump(feature_collection, f)
+            return output_path
+        except Exception:
+            return None
+    
+    def convert_geojson_to_kml(self, geojson_path, kml_path):
+        """Convert GeoJSON to KML"""
+        try:
+            with open(geojson_path, 'r') as f:
+                geojson_data = json.load(f)
+    
+            k = kml.KML()
+            ns = '{http://www.opengis.net/kml/2.2}'
+            d = kml.Document(ns, 'docid', 'doc name', 'doc description')
+            k.append(d)
+    
+            for feature in geojson_data['features']:
+                coords = feature['geometry']['coordinates']
+                properties = feature['properties']
+                
+                p = kml.Placemark(ns, 'id', properties.get('label', 'Unnamed'), 'description')
+                p.geometry = geometry.Point(coords[0], coords[1])
+                d.append(p)
+    
+            with open(kml_path, 'w') as f:
+                f.write(k.to_string(prettyprint=True))
+            return True
+        except Exception:
+            return False
+    
+    def convert_geojson_to_shp(self, geojson_path, shp_path):
+        """Convert GeoJSON to SHP"""
+        try:
+            gdf = gpd.read_file(geojson_path)
+            gdf.to_file(shp_path, driver='ESRI Shapefile')
+            return True
+        except Exception:
+            return False

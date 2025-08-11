@@ -1,0 +1,34 @@
+import sys
+import os
+from PyQt5.QtWidgets import QApplication
+from PyQt5.QtCore import QCoreApplication
+
+# Add the current directory to the path so we can import our modules
+current_dir = os.path.dirname(os.path.abspath(__file__))
+if current_dir not in sys.path:
+    sys.path.append(current_dir)
+
+# Import our modules
+from ui.main_window import MainWindow
+from utils.config_manager import setup_database
+
+def main():
+    # Set application details
+    QCoreApplication.setOrganizationName("Pokok Kuning")
+    QCoreApplication.setApplicationName("Pokok Kuning Desktop App")
+    
+    # Create the application
+    app = QApplication(sys.argv)
+    
+    # Setup database if it doesn't exist
+    setup_database()
+    
+    # Create and show the main window
+    window = MainWindow()
+    window.show()
+    
+    # Execute the application
+    sys.exit(app.exec_())
+
+if __name__ == "__main__":
+    main()
