@@ -12,6 +12,7 @@ import sys
 import gc  # For garbage collection
 from PIL import Image
 import numpy as np
+import cv2
 
 # Step 1: Image validation and preprocessing
 def validate_and_preprocess_image(image_path):
@@ -60,8 +61,8 @@ def load_yolo_model(weights_path):
     model = YOLO(weights_path)
     return model
 
-def detect_objects(image_path, model, imgsz, conf, iou, classes=None):
-    """Improved object detection with error handling"""
+def detect_objects(image_path, model, imgsz, conf, iou, classes=None, save_annotated=False, annotated_folder=None):
+    """Improved object detection with error handling and optional annotation saving"""
     temp_image_path = None
     try:
         # Validate image first
@@ -82,7 +83,7 @@ def detect_objects(image_path, model, imgsz, conf, iou, classes=None):
             conf=conf, 
             iou=iou, 
             classes=classes, 
-            max_det=1000,  # Reduced from 12000
+            max_det=12000,  # Reduced from 12000
             verbose=False  # Reduce console output
         )
         
@@ -97,6 +98,10 @@ def detect_objects(image_path, model, imgsz, conf, iou, classes=None):
                         abnormal_count += 1
                     elif class_id == 1:  # Assuming class 1 is normal
                         normal_count += 1
+        
+        # Save annotated frame if requested
+        if save_annotated and annotated_folder and results:
+            save_annotated_frame(results[0], image_path, annotated_folder, model.names)
         
         progress = {
             "abnormal_count": abnormal_count,
@@ -124,6 +129,93 @@ def detect_objects(image_path, model, imgsz, conf, iou, classes=None):
                 print(f"  Cleaned up temporary file: {temp_image_path}")
             except Exception as e:
                 print(f"  Warning: Could not remove temporary file {temp_image_path}: {e}")
+
+def save_annotated_frame(result, original_image_path, annotated_folder, class_names):
+    """Save annotated frame with bounding boxes and labels"""
+    try:
+        # Create annotated folder if it doesn't exist
+        os.makedirs(annotated_folder, exist_ok=True)
+        
+        # Load original image
+        image = cv2.imread(original_image_path)
+        if image is None:
+            print(f"  Warning: Could not load image for annotation: {original_image_path}")
+            return
+        
+        # Define colors for different classes (BGR format for OpenCV)
+        colors = {
+            0: (0, 0, 255),    # Red for abnormal
+            1: (0, 255, 0),    # Green for normal
+            2: (255, 0, 0),    # Blue for other classes
+            3: (0, 255, 255),  # Cyan
+            4: (255, 0, 255),  # Magenta
+            5: (255, 255, 0),  # Yellow
+        }
+        
+        # Draw bounding boxes and labels
+        if result.boxes is not None:
+            for detection in result.boxes:
+                # Get coordinates
+                x1, y1, x2, y2 = detection.xyxy[0].cpu().numpy().astype(int)
+                
+                # Get class info
+                class_id = int(detection.cls)
+                confidence = float(detection.conf)
+                class_name = class_names.get(class_id, f"class_{class_id}")
+                
+                # Choose color
+                color = colors.get(class_id, (128, 128, 128))  # Default gray
+                
+                # Draw bounding box
+                cv2.rectangle(image, (x1, y1), (x2, y2), color, 2)
+                
+                # Prepare label text
+                label = f"{class_name}: {confidence:.2f}"
+                
+                # Get text size for background rectangle
+                (text_width, text_height), baseline = cv2.getTextSize(
+                    label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2
+                )
+                
+                # Draw background rectangle for text
+                cv2.rectangle(
+                    image, 
+                    (x1, y1 - text_height - 10), 
+                    (x1 + text_width, y1), 
+                    color, 
+                    -1
+                )
+                
+                # Draw text
+                cv2.putText(
+                    image, 
+                    label, 
+                    (x1, y1 - 5), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 
+                    0.6, 
+                    (255, 255, 255), 
+                    2
+                )
+        
+        # Save annotated image
+        base_name = os.path.splitext(os.path.basename(original_image_path))[0]
+        output_path = os.path.join(annotated_folder, f"{base_name}_annotated.jpg")
+        
+        # Handle duplicate names
+        counter = 1
+        while os.path.exists(output_path):
+            output_path = os.path.join(annotated_folder, f"{base_name}_annotated_{counter}.jpg")
+            counter += 1
+        
+        # Save the image
+        success = cv2.imwrite(output_path, image)
+        if success:
+            print(f"  Saved annotated frame: {output_path}")
+        else:
+            print(f"  Warning: Failed to save annotated frame: {output_path}")
+            
+    except Exception as e:
+        print(f"  Error saving annotated frame: {e}")
 
 # Step 3: Convert Image Coordinates to Map Coordinates
 def read_jgw(jgw_file):
@@ -251,10 +343,18 @@ if __name__ == "__main__":
     parser.add_argument("--kml", action="store_true", help="Convert GeoJSON to KML")
     parser.add_argument("--shp", action="store_true", help="Convert GeoJSON to SHP")
     parser.add_argument("--skip-invalid", action="store_true", help="Skip invalid images instead of stopping")
+    parser.add_argument("--save-annotated", action="store_true", help="Save annotated frames with bounding boxes")
+    parser.add_argument("--annotated-folder", type=str, help="Folder to save annotated frames (default: 'annotated' subfolder)")
 
     args = parser.parse_args()
 
+    # Set default annotated folder if not specified
+    if args.save_annotated and not args.annotated_folder:
+        args.annotated_folder = os.path.join(args.folder, "annotated")
+
     print(f"Starting processing with image size: {args.imgsz}")
+    if args.save_annotated:
+        print(f"Annotated frames will be saved to: {args.annotated_folder}")
     print("Note: If you experience memory errors, try reducing --imgsz to 640 or 1280")
     
     start_time = time.time()
@@ -284,7 +384,9 @@ if __name__ == "__main__":
         try:
             # Detect objects
             detected_objects, counts = detect_objects(
-                image_path, model, args.imgsz, args.conf, args.iou, classes=args.classes
+                image_path, model, args.imgsz, args.conf, args.iou, 
+                classes=args.classes, save_annotated=args.save_annotated, 
+                annotated_folder=args.annotated_folder
             )
             
             if detected_objects is None:
@@ -343,7 +445,8 @@ if __name__ == "__main__":
                 "avg_time_per_file": f"{avg_time:.2f}s",
                 "abnormal_count": counts.get("abnormal_count", 0),
                 "normal_count": counts.get("normal_count", 0),
-                "image_info": counts.get("image_size", "unknown")
+                "image_info": counts.get("image_size", "unknown"),
+                "annotated_saved": args.save_annotated
             }
             
             print(json.dumps(progress))
@@ -367,6 +470,8 @@ if __name__ == "__main__":
     print(f"\nProcessing complete!")
     print(f"Successfully processed: {successful_processed}/{total_files}")
     print(f"Failed: {failed_processed}/{total_files}")
+    if args.save_annotated:
+        print(f"Annotated frames saved to: {args.annotated_folder}")
     display_duration(start_time, end_time)
     
     if failed_processed > 0:
