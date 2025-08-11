@@ -23,8 +23,8 @@ class ImageProcessor:
         # Store config
         self.config = config
         
-        # Load model
-        model_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 
+        # Load model - Use same path as CLI version
+        model_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 
                                 "model", f"{config['model']}.pt")
         
         try:
@@ -57,7 +57,7 @@ class ImageProcessor:
                 # Detect objects
                 detected_objects, counts = self.detect_objects(
                     image_path, 
-                    int(config.get("imgsz", 1280)), 
+                    int(config.get("imgsz", 12800)),  # Changed default from 1280 to 12800
                     float(config.get("conf", 0.2)), 
                     float(config.get("iou", 0.2)),
                     save_annotated=config.get("save_annotated", False),

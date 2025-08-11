@@ -51,12 +51,12 @@ def setup_database():
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             default_model,  # model
-            "1280",        # imgsz
+            "12800",       # imgsz - Changed from 1280 to 12800 to match CLI version
             "0.2",         # iou
             "0.2",         # conf
             "true",        # convert_shp
             "false",       # convert_kml
-            "12000",       # max_det
+            "10000",       # max_det - Changed from 12000 to 10000 to match CLI version
             "3",           # line_width
             "false",       # show_labels
             "false",       # show_conf
