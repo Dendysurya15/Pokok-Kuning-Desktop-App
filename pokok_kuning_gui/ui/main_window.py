@@ -456,5 +456,7 @@ class MainWindow(QMainWindow):
             "line_width": str(self.line_width_input.value()),
             "show_labels": "true" if self.show_labels_checkbox.isChecked() else "false",
             "show_conf": "true" if self.show_conf_checkbox.isChecked() else "false",
-            "status_blok": "Full Blok" if self.status_full_radio.isChecked() else "Setengah Blok"
+            "status_blok": "Full Blok" if self.status_full_radio.isChecked() else "Setengah Blok",
+            "save_annotated": self.save_annotated_checkbox.isChecked(),
+            "annotated_folder": os.path.join(self.selected_folder, "annotated") if self.selected_folder and self.save_annotated_checkbox.isChecked() else None
         }

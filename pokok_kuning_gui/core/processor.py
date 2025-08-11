@@ -14,10 +14,14 @@ from fastkml import kml, geometry
 class ImageProcessor:
     def __init__(self):
         self.model = None
+        self.config = None
     
     def process_folder(self, folder_path, config, progress_callback=None):
         """Process all images in the folder based on configuration"""
         start_time = time.time()
+        
+        # Store config
+        self.config = config
         
         # Load model
         model_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 
@@ -198,14 +202,23 @@ class ImageProcessor:
             temp_image_path = temp_path  # Keep track for cleanup
             
             # Use smaller max_det to reduce memory usage
+            # Get max_det from config if available
+            max_det = 10000  # Default value
+            if hasattr(self, 'config') and self.config and 'max_det' in self.config:
+                try:
+                    max_det = int(self.config['max_det'])
+                except (ValueError, TypeError):
+                    pass
+                
             results = self.model.predict(
                 source=processing_path, 
                 imgsz=imgsz, 
                 conf=conf, 
                 iou=iou, 
                 classes=classes, 
-                max_det=10000,
-                verbose=False  # Reduce console output
+                max_det=max_det,
+                verbose=False,  # Reduce console output
+                save=False  # We'll handle saving annotated images ourselves
             )
             
             abnormal_count = 0
@@ -259,6 +272,7 @@ class ImageProcessor:
             # Load original image
             image = cv2.imread(original_image_path)
             if image is None:
+                print(f"  Warning: Could not load image for annotation: {original_image_path}")
                 return
             
             # Define colors for different classes (BGR format for OpenCV)
@@ -285,36 +299,60 @@ class ImageProcessor:
                     # Choose color
                     color = colors.get(class_id, (128, 128, 128))  # Default gray
                     
-                    # Draw bounding box
-                    cv2.rectangle(image, (x1, y1), (x2, y2), color, 2)
+                    # Draw bounding box with line width from config (default 2)
+                    line_width = 2
+                    if hasattr(self, 'config') and self.config and 'line_width' in self.config:
+                        try:
+                            line_width = int(self.config['line_width'])
+                        except (ValueError, TypeError):
+                            pass
+                    cv2.rectangle(image, (x1, y1), (x2, y2), color, line_width)
                     
-                    # Prepare label text
-                    label = f"{class_name}: {confidence:.2f}"
+                    # Prepare label text based on config settings
+                    show_labels = True
+                    show_conf = True
                     
-                    # Get text size for background rectangle
-                    (text_width, text_height), baseline = cv2.getTextSize(
-                        label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2
-                    )
+                    if hasattr(self, 'config'):
+                        if 'show_labels' in self.config:
+                            show_labels = self.config['show_labels'] == "true"
+                        if 'show_conf' in self.config:
+                            show_conf = self.config['show_conf'] == "true"
                     
-                    # Draw background rectangle for text
-                    cv2.rectangle(
-                        image, 
-                        (x1, y1 - text_height - 10), 
-                        (x1 + text_width, y1), 
-                        color, 
-                        -1
-                    )
+                    if show_labels and show_conf:
+                        label = f"{class_name}: {confidence:.2f}"
+                    elif show_labels:
+                        label = f"{class_name}"
+                    elif show_conf:
+                        label = f"{confidence:.2f}"
+                    else:
+                        label = ""
                     
-                    # Draw text
-                    cv2.putText(
-                        image, 
-                        label, 
-                        (x1, y1 - 5), 
-                        cv2.FONT_HERSHEY_SIMPLEX, 
-                        0.6, 
-                        (255, 255, 255), 
-                        2
-                    )
+                    # Only draw label if not empty
+                    if label:
+                        # Get text size for background rectangle
+                        (text_width, text_height), baseline = cv2.getTextSize(
+                            label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2
+                        )
+                        
+                        # Draw background rectangle for text
+                        cv2.rectangle(
+                            image, 
+                            (x1, y1 - text_height - 10), 
+                            (x1 + text_width, y1), 
+                            color, 
+                            -1
+                        )
+                        
+                        # Draw text
+                        cv2.putText(
+                            image, 
+                            label, 
+                            (x1, y1 - 5), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 
+                            0.6, 
+                            (255, 255, 255), 
+                            2
+                        )
             
             # Save annotated image
             base_name = os.path.splitext(os.path.basename(original_image_path))[0]
@@ -327,10 +365,14 @@ class ImageProcessor:
                 counter += 1
             
             # Save the image
-            cv2.imwrite(output_path, image)
+            success = cv2.imwrite(output_path, image)
+            if success:
+                print(f"  Saved annotated frame: {output_path}")
+            else:
+                print(f"  Warning: Failed to save annotated frame: {output_path}")
                 
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"  Error saving annotated frame: {e}")
     
     def read_jgw(self, jgw_file):
         """Read JGW file with error handling"""
