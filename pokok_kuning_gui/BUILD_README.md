@@ -1,143 +1,96 @@
-# Cara Build Executable (.exe) untuk Pokok Kuning Desktop App
+# Build Instructions untuk Pokok Kuning Desktop App
 
-Dokumen ini menjelaskan cara mengubah aplikasi Python Pokok Kuning GUI menjadi file executable (.exe) yang bisa langsung dijalankan tanpa perlu menginstall Python atau dependencies lainnya.
+## Cara Membuat Executable (.exe)
 
-## 🎯 Keuntungan
+### Method 1: Menggunakan Build Script (Recommended)
 
-- **Portable**: User tidak perlu install Python atau library apapun
-- **Standalone**: Semua dependencies sudah termasuk dalam satu folder
-- **Easy Distribution**: Tinggal copy folder ke komputer lain dan jalankan
-- **Professional**: Terlihat seperti aplikasi desktop biasa
+1. **Persiapan Environment**
+   ```bash
+   # Pastikan semua dependencies terinstall
+   pip install -r requirements.txt
+   ```
 
-## 🛠️ Tools yang Dibutuhkan
+2. **Build menggunakan Script**
+   ```bash
+   # Windows
+   build.bat
+   
+   # Atau manual
+   python build_exe.py
+   ```
 
-- Python 3.7+ (hanya untuk build, tidak untuk user)
-- PyInstaller (akan diinstall otomatis)
+3. **Hasil Build**
+   - Executable akan tersedia di folder `dist/PokokKuningApp/`
+   - File utama: `PokokKuningApp.exe`
 
-## 📁 File yang Dibuat
+### Method 2: Manual PyInstaller
 
-1. **`build_exe.py`** - Script Python untuk build otomatis
-2. **`pokok_kuning.spec`** - Konfigurasi PyInstaller
-3. **`build.bat`** - Script batch untuk Windows
-4. **`BUILD_README.md`** - File ini
+1. **Install PyInstaller**
+   ```bash
+   pip install pyinstaller
+   ```
 
-## 🚀 Cara Build
+2. **Build dengan Spec File**
+   ```bash
+   pyinstaller --clean pokok_kuning.spec
+   ```
 
-### Opsi 1: Menggunakan Script Python (Recommended)
-
-```bash
-# Jalankan dari folder pokok_kuning_gui
-python build_exe.py
-```
-
-Script ini akan:
-- Install PyInstaller otomatis
-- Buat file .spec
-- Build executable
-- Buat script installer
-
-### Opsi 2: Menggunakan Script Batch
-
-```bash
-# Double click file build.bat
-# Atau jalankan dari command prompt
-build.bat
-```
-
-### Opsi 3: Manual dengan PyInstaller
-
-```bash
-# Install PyInstaller
-pip install pyinstaller
-
-# Build menggunakan spec file
-pyinstaller --clean pokok_kuning.spec
-```
-
-## 📦 Output
-
-Setelah build berhasil, Anda akan mendapatkan:
+## Struktur Hasil Build
 
 ```
 dist/
-└── Pokok_Kuning_Desktop_App/
-    ├── Pokok_Kuning_Desktop_App.exe  ← File utama
-    ├── model/                         ← Model YOLO
-    ├── ui/                           ← UI components
-    ├── utils/                        ← Utilities
-    ├── core/                         ← Core functions
-    └── [dependencies lainnya]        ← Python libraries
+└── PokokKuningApp/
+    ├── PokokKuningApp.exe      # File executable utama
+    ├── model/                  # Model YOLO
+    ├── torch/                  # PyTorch dependencies
+    ├── ultralytics/           # Ultralytics library
+    └── [various DLLs and dependencies]
 ```
 
-## 📤 Distribusi ke User
+## Troubleshooting
 
-### Cara 1: Copy Folder (Recommended)
-1. Copy seluruh folder `Pokok_Kuning_Desktop_App` ke komputer user
-2. User tinggal double-click file `.exe`
-3. Tidak perlu install apapun
+### Error: "Module not found"
+- Pastikan semua dependencies dalam `requirements.txt` sudah terinstall
+- Jalankan: `pip install -r requirements.txt`
 
-### Cara 2: Buat Installer
-1. Jalankan `create_installer.bat` (dibuat otomatis oleh `build_exe.py`)
-2. Folder `installer` akan dibuat
-3. Copy folder tersebut ke user
+### Error: "Failed to execute script"
+- Periksa log error dengan menjalankan exe dari command prompt
+- Pastikan model file (.pt) ada di folder yang benar
 
-### Cara 3: Archive/Compress
-1. Zip folder `Pokok_Kuning_Desktop_App`
-2. Kirim file zip ke user
-3. User extract dan jalankan
+### File Size Terlalu Besar
+- Executable akan sekitar 2-4 GB karena include PyTorch dan ultralytics
+- Ini normal untuk aplikasi ML dengan dependencies besar
 
-## ⚠️ Troubleshooting
+### Testing Build
+1. Copy folder `dist/PokokKuningApp` ke komputer lain
+2. Jalankan `PokokKuningApp.exe`
+3. Pastikan aplikasi berjalan tanpa perlu install Python/dependencies
 
-### Error: "Missing module"
-- Pastikan semua dependencies ada di `requirements.txt`
-- Cek `hiddenimports` di file `.spec`
+## Optimasi Build
 
-### Error: "File not found"
-- Pastikan struktur folder benar
-- Cek `datas` di file `.spec`
+### Mengurangi Size
+- Edit `pokok_kuning.spec` untuk exclude modules yang tidak diperlukan
+- Gunakan `excludes=['matplotlib', 'tkinter']` (sudah diset)
 
-### Executable tidak bisa dijalankan
-- Pastikan build berhasil tanpa error
-- Cek apakah ada antivirus yang memblokir
-- Test di komputer yang bersih (tanpa Python)
+### Debug Mode
+- Ubah `console=False` menjadi `console=True` di spec file untuk melihat output debug
 
-### Ukuran file terlalu besar
-- Ini normal untuk aplikasi dengan ML models
-- Bisa mencapai 500MB-1GB
-- Gunakan UPX compression (sudah diaktifkan)
+## Distribusi
 
-## 🔧 Customization
+Untuk distribusi ke end user:
+1. Zip folder `dist/PokokKuningApp`
+2. Include README untuk user tentang cara menjalankan
+3. Pastikan include model files dan semua dependencies
 
-### Ganti Nama Aplikasi
-Edit file `.spec`:
-```python
-name='Nama_Aplikasi_Anda'
-```
+## System Requirements
 
-### Tambah Icon
-1. Buat file `icon.ico`
-2. Letakkan di folder yang sama dengan `.spec`
-3. Icon akan otomatis digunakan
+**Minimum untuk menjalankan executable:**
+- Windows 10/11 64-bit
+- RAM: 4GB (8GB recommended)
+- Storage: 5GB free space
+- GPU: Optional (akan menggunakan CPU jika tidak ada GPU)
 
-### Ganti Console Mode
-Untuk debug, ubah di `.spec`:
-```python
-console=True  # Tampilkan console window
-```
-
-## 📋 Checklist Build
-
-- [ ] Semua dependencies terinstall
-- [ ] File `main.py` ada dan bisa dijalankan
-- [ ] Model YOLO ada di folder `model/`
-- [ ] Build berhasil tanpa error
-- [ ] Test executable di komputer lain
-- [ ] Semua fitur berfungsi normal
-
-## 🎉 Selesai!
-
-Setelah build berhasil, aplikasi Anda siap didistribusikan ke user tanpa perlu mereka menginstall Python atau library apapun. User tinggal copy folder dan jalankan file `.exe`!
-
----
-
-**Note**: Build pertama kali mungkin memakan waktu lama (10-30 menit) karena PyInstaller perlu mengumpulkan semua dependencies. Build selanjutnya akan lebih cepat.
+**Untuk development/building:**
+- Python 3.8+
+- Semua packages dalam requirements.txt
+- PyInstaller

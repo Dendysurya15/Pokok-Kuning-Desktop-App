@@ -2,74 +2,150 @@
 
 block_cipher = None
 
-# Data files yang perlu diinclude
-datas = [
-    ('model/yolov8n-pokok-kuning.pt', 'model'),
-    ('ui', 'ui'),
-    ('utils', 'utils'),
-    ('core', 'core'),
+import sys
+import os
+from pathlib import Path
+
+# Define data files to include
+added_files = [
+    ('model', 'model'),  # Include entire model directory
+    ('README.md', '.'),
 ]
 
-# Hidden imports yang diperlukan
+# Hidden imports for all required packages
 hiddenimports = [
-    'PyQt5.QtCore',
-    'PyQt5.QtWidgets',
-    'PyQt5.QtGui',
+    # Ultralytics and YOLO
     'ultralytics',
-    'ultralytics.yolo',
-    'ultralytics.yolo.v8',
-    'ultralytics.yolo.v8.detect',
-    'ultralytics.yolo.v8.segment',
-    'ultralytics.yolo.v8.classify',
-    'ultralytics.yolo.v8.pose',
-    'ultralytics.yolo.utils',
-    'ultralytics.yolo.utils.ops',
-    'ultralytics.yolo.utils.plotting',
-    'ultralytics.yolo.utils.torch_utils',
-    'ultralytics.yolo.utils.checks',
-    'ultralytics.yolo.utils.files',
-    'ultralytics.yolo.utils.tal',
-    'ultralytics.yolo.utils.loss',
-    'ultralytics.yolo.utils.metrics',
-    'numpy',
+    'ultralytics.models',
+    'ultralytics.models.yolo',
+    'ultralytics.models.yolo.detect',
+    'ultralytics.models.yolo.detect.predict',
+    'ultralytics.utils',
+    'ultralytics.utils.plotting',
+    'ultralytics.utils.ops',
+    'ultralytics.engine',
+    'ultralytics.engine.predictor',
+    'ultralytics.engine.results',
+    'ultralytics.data',
+    'ultralytics.data.utils',
+    'ultralytics.nn',
+    'ultralytics.nn.modules',
+    'ultralytics.trackers',
+    
+    # Computer Vision
     'cv2',
+    'numpy',
     'PIL',
     'PIL.Image',
+    'PIL.ImageTk',
     'PIL.ImageDraw',
     'PIL.ImageFont',
+    
+    # PyTorch
+    'torch',
+    'torch.nn',
+    'torch.utils',
+    'torch.utils.data',
+    'torchvision',
+    'torchvision.transforms',
+    'torchvision.models',
+    
+    # Geospatial libraries
     'geojson',
     'shapely',
     'shapely.geometry',
     'shapely.ops',
     'fastkml',
+    'fastkml.kml',
     'geopandas',
+    'fiona',
+    'pyproj',
+    
+    # PyQt5
+    'PyQt5',
+    'PyQt5.QtCore',
+    'PyQt5.QtGui', 
+    'PyQt5.QtWidgets',
+    'PyQt5.QtOpenGL',
+    'PyQt5.sip',
+    
+    # Other utilities
     'tqdm',
-    'sqlite3',
-    'json',
-    'os',
-    'sys',
-    'pathlib',
-    'datetime',
-    'time',
-    'threading',
-    'queue',
+    'yaml',
+    'matplotlib',
+    'seaborn',
+    'pandas',
+    'scipy',
+    'sklearn',
+    
+    # System libraries
+    'pkg_resources',
+    'setuptools',
+    'wheel',
 ]
+
+# Collect package data
+def collect_pkg_data():
+    """Collect package data files"""
+    data_files = []
+    
+    try:
+        # Get ultralytics package path
+        import ultralytics
+        ultralytics_path = ultralytics.__path__[0]
+        data_files.append((ultralytics_path, 'ultralytics'))
+        print(f"Added ultralytics from: {ultralytics_path}")
+    except ImportError:
+        print("Warning: ultralytics not found")
+    
+    try:
+        # Get torch data
+        import torch
+        torch_path = torch.__path__[0]
+        data_files.append((torch_path, 'torch'))
+        print(f"Added torch from: {torch_path}")
+    except ImportError:
+        print("Warning: torch not found")
+    
+    try:
+        # Get torchvision data
+        import torchvision
+        torchvision_path = torchvision.__path__[0]
+        data_files.append((torchvision_path, 'torchvision'))
+        print(f"Added torchvision from: {torchvision_path}")
+    except ImportError:
+        print("Warning: torchvision not found")
+    
+    return data_files
+
+# Add collected package data
+added_files.extend(collect_pkg_data())
 
 a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=datas,
+    datas=added_files,
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=[
+        'tkinter',
+        'matplotlib.backends._backend_tk',
+        'matplotlib.backends.backend_tkagg',
+        'IPython',
+        'jupyter',
+        'notebook',
+    ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,
     noarchive=False,
 )
+
+# Remove duplicates and filter
+a.datas = list(set(a.datas))
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
@@ -78,18 +154,18 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name='Pokok_Kuning_Desktop_App',
+    name='PokokKuningApp',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
-    console=False,  # False untuk GUI app (tidak ada console window)
+    console=False,  # Set to True for debugging
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon='icon.ico' if os.path.exists('icon.ico') else None,
+    icon=None,  # Add 'icon.ico' if you have an icon file
 )
 
 coll = COLLECT(
@@ -100,5 +176,5 @@ coll = COLLECT(
     strip=False,
     upx=True,
     upx_exclude=[],
-    name='Pokok_Kuning_Desktop_App',
+    name='PokokKuningApp',
 )

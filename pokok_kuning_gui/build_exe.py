@@ -1,101 +1,156 @@
 #!/usr/bin/env python3
 """
-Script untuk build aplikasi Pokok Kuning GUI menjadi executable (.exe)
-Menggunakan PyInstaller dengan konfigurasi yang sudah dioptimalkan
+Build script untuk membuat executable dari Pokok Kuning Desktop App
 """
 
 import os
 import sys
-import subprocess
 import shutil
+import subprocess
 from pathlib import Path
 
-def install_pyinstaller():
-    """Install PyInstaller jika belum ada"""
+def run_command(cmd, cwd=None):
+    """Run command and print output"""
+    print(f"Running: {cmd}")
+    result = subprocess.run(cmd, shell=True, cwd=cwd, capture_output=True, text=True)
+    if result.stdout:
+        print(result.stdout)
+    if result.stderr:
+        print(result.stderr)
+    return result.returncode == 0
+
+def build_exe():
+    """Build executable using PyInstaller"""
+    
+    # Get current directory
+    current_dir = Path(__file__).parent
+    
+    # Clean previous builds
+    dist_dir = current_dir / "dist"
+    build_dir = current_dir / "build"
+    
+    if dist_dir.exists():
+        print("Cleaning previous dist directory...")
+        shutil.rmtree(dist_dir)
+    
+    if build_dir.exists():
+        print("Cleaning previous build directory...")
+        shutil.rmtree(build_dir)
+    
+    # Install PyInstaller if not available
+    print("Checking PyInstaller...")
     try:
         import PyInstaller
-        print("✓ PyInstaller sudah terinstall")
+        print("PyInstaller is available")
     except ImportError:
         print("Installing PyInstaller...")
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "pyinstaller"])
-        print("✓ PyInstaller berhasil diinstall")
+        if not run_command("pip install pyinstaller"):
+            print("Failed to install PyInstaller")
+            return False
+    
+    # Create spec file if it doesn't exist
+    spec_file = current_dir / "pokok_kuning.spec"
+    if not spec_file.exists():
+        print("Creating PyInstaller spec file...")
+        create_spec_file(spec_file)
+    
+    # Build the executable
+    print("Building executable...")
+    cmd = f"pyinstaller --clean {spec_file}"
+    
+    if not run_command(cmd, cwd=current_dir):
+        print("Build failed!")
+        return False
+    
+    print("Build completed successfully!")
+    print(f"Executable can be found in: {dist_dir}")
+    
+    return True
 
-def create_spec_file():
-    """Buat file .spec untuk PyInstaller"""
+def create_spec_file(spec_path):
+    """Create PyInstaller spec file"""
+    
     spec_content = '''# -*- mode: python ; coding: utf-8 -*-
 
 block_cipher = None
 
-# Data files yang perlu diinclude
-datas = [
-    ('model/yolov8n-pokok-kuning.pt', 'model'),
-    ('ui', 'ui'),
-    ('utils', 'utils'),
-    ('core', 'core'),
+import sys
+import os
+from pathlib import Path
+
+# Get current directory
+current_dir = Path.cwd()
+
+# Define data files and hidden imports
+added_files = [
+    ('model/*.pt', 'model'),  # Include model files
+    ('ui/*.py', 'ui'),
+    ('core/*.py', 'core'), 
+    ('utils/*.py', 'utils'),
 ]
 
-# Hidden imports yang diperlukan
+# Hidden imports for ultralytics and other dependencies
 hiddenimports = [
-    'PyQt5.QtCore',
-    'PyQt5.QtWidgets',
-    'PyQt5.QtGui',
     'ultralytics',
-    'ultralytics.yolo',
-    'ultralytics.yolo.v8',
-    'ultralytics.yolo.v8.detect',
-    'ultralytics.yolo.v8.segment',
-    'ultralytics.yolo.v8.classify',
-    'ultralytics.yolo.v8.pose',
-    'ultralytics.yolo.utils',
-    'ultralytics.yolo.utils.ops',
-    'ultralytics.yolo.utils.plotting',
-    'ultralytics.yolo.utils.torch_utils',
-    'ultralytics.yolo.utils.checks',
-    'ultralytics.yolo.utils.files',
-    'ultralytics.yolo.utils.tal',
-    'ultralytics.yolo.utils.loss',
-    'ultralytics.yolo.utils.metrics',
-    'ultralytics.yolo.utils.plotting',
-    'ultralytics.yolo.utils.torch_utils',
-    'ultralytics.yolo.utils.checks',
-    'ultralytics.yolo.utils.files',
-    'ultralytics.yolo.utils.tal',
-    'ultralytics.yolo.utils.loss',
-    'ultralytics.yolo.utils.metrics',
-    'numpy',
+    'ultralytics.models',
+    'ultralytics.models.yolo',
+    'ultralytics.models.yolo.detect',
+    'ultralytics.utils',
+    'ultralytics.engine',
+    'ultralytics.engine.predictor',
     'cv2',
+    'numpy',
     'PIL',
     'PIL.Image',
-    'PIL.ImageDraw',
-    'PIL.ImageFont',
+    'torch',
+    'torchvision',
     'geojson',
     'shapely',
     'shapely.geometry',
-    'shapely.ops',
     'fastkml',
     'geopandas',
     'tqdm',
-    'sqlite3',
-    'json',
-    'os',
-    'sys',
-    'pathlib',
-    'datetime',
-    'time',
-    'threading',
-    'queue',
+    'PyQt5.QtCore',
+    'PyQt5.QtGui', 
+    'PyQt5.QtWidgets',
+    'PyQt5.QtOpenGL',
 ]
+
+# Collect all packages
+import pkg_resources
+import site
+import ultralytics
+
+# Get ultralytics package path
+ultralytics_path = ultralytics.__path__[0]
+torch_site_packages = None
+
+# Find torch installation
+for site_dir in site.getsitepackages() + [site.getusersitepackages()]:
+    if site_dir and os.path.exists(os.path.join(site_dir, 'torch')):
+        torch_site_packages = site_dir
+        break
+
+# Additional data files
+if torch_site_packages:
+    added_files.extend([
+        (os.path.join(torch_site_packages, 'torch'), 'torch'),
+        (os.path.join(torch_site_packages, 'torchvision'), 'torchvision'),
+    ])
+
+# Add ultralytics data
+added_files.append((ultralytics_path, 'ultralytics'))
 
 a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=datas,
+    datas=added_files,
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=['matplotlib', 'tkinter'],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,
@@ -109,18 +164,18 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name='Pokok_Kuning_Desktop_App',
+    name='PokokKuningApp',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
-    console=False,  # False untuk GUI app (tidak ada console window)
+    console=False,  # Set to True if you want console window
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon='icon.ico' if os.path.exists('icon.ico') else None,
+    icon=None,  # Add icon path here if you have one
 )
 
 coll = COLLECT(
@@ -131,117 +186,21 @@ coll = COLLECT(
     strip=False,
     upx=True,
     upx_exclude=[],
-    name='Pokok_Kuning_Desktop_App',
+    name='PokokKuningApp',
 )
 '''
     
-    with open('pokok_kuning.spec', 'w', encoding='utf-8') as f:
+    with open(spec_path, 'w', encoding='utf-8') as f:
         f.write(spec_content)
     
-    print("✓ File pokok_kuning.spec berhasil dibuat")
-
-def build_executable():
-    """Build executable menggunakan PyInstaller"""
-    print("Building executable...")
-    
-    # Hapus folder dist dan build jika ada
-    for folder in ['dist', 'build']:
-        if os.path.exists(folder):
-            shutil.rmtree(folder)
-            print(f"✓ Folder {folder} dihapus")
-    
-    # Jalankan PyInstaller
-    cmd = [
-        sys.executable, "-m", "PyInstaller",
-        "--clean",
-        "pokok_kuning.spec"
-    ]
-    
-    print("Menjalankan PyInstaller...")
-    print(f"Command: {' '.join(cmd)}")
-    
-    try:
-        result = subprocess.run(cmd, check=True, capture_output=True, text=True)
-        print("✓ Build berhasil!")
-        print("Executable tersedia di folder 'dist/Pokok_Kuning_Desktop_App/'")
-    except subprocess.CalledProcessError as e:
-        print(f"❌ Build gagal: {e}")
-        print(f"Error output: {e.stderr}")
-        return False
-    
-    return True
-
-def create_installer_script():
-    """Buat script untuk membuat installer sederhana"""
-    installer_script = '''@echo off
-echo Membuat installer untuk Pokok Kuning Desktop App...
-echo.
-
-REM Buat folder installer
-if not exist "installer" mkdir installer
-if not exist "installer\\Pokok_Kuning_Desktop_App" mkdir installer\\Pokok_Kuning_Desktop_App
-
-REM Copy executable dan dependencies
-xcopy /E /I /Y "dist\\Pokok_Kuning_Desktop_App" "installer\\Pokok_Kuning_Desktop_App"
-
-REM Buat shortcut di desktop
-echo Set oWS = WScript.CreateObject("WScript.Shell") > CreateShortcut.vbs
-echo sLinkFile = "%USERPROFILE%\\Desktop\\Pokok Kuning Desktop App.lnk" >> CreateShortcut.vbs
-echo Set oLink = oWS.CreateShortcut(sLinkFile) >> CreateShortcut.vbs
-echo oLink.TargetPath = "%CD%\\installer\\Pokok_Kuning_Desktop_App\\Pokok_Kuning_Desktop_App.exe" >> CreateShortcut.vbs
-echo oLink.WorkingDirectory = "%CD%\\installer\\Pokok_Kuning_Desktop_App" >> CreateShortcut.vbs
-echo oLink.Description = "Pokok Kuning Desktop Application" >> CreateShortcut.vbs
-echo oLink.Save >> CreateShortcut.vbs
-
-cscript CreateShortcut.vbs
-del CreateShortcut.vbs
-
-echo.
-echo Installer berhasil dibuat di folder 'installer'!
-echo User bisa copy folder 'Pokok_Kuning_Desktop_App' ke komputer mereka
-echo dan jalankan file .exe langsung tanpa install apapun
-pause
-'''
-    
-    with open('create_installer.bat', 'w', encoding='utf-8') as f:
-        f.write(installer_script)
-    
-    print("✓ Script create_installer.bat berhasil dibuat")
-
-def main():
-    """Main function"""
-    print("=" * 60)
-    print("BUILD EXECUTABLE POKOK KUNING DESKTOP APP")
-    print("=" * 60)
-    print()
-    
-    # Pastikan kita di folder yang benar
-    if not os.path.exists('main.py'):
-        print("❌ Error: File main.py tidak ditemukan!")
-        print("Pastikan script ini dijalankan dari folder pokok_kuning_gui")
-        return
-    
-    # Install PyInstaller
-    install_pyinstaller()
-    print()
-    
-    # Buat file .spec
-    create_spec_file()
-    print()
-    
-    # Build executable
-    if build_executable():
-        print()
-        create_installer_script()
-        print()
-        print("=" * 60)
-        print("BUILD SELESAI!")
-        print("=" * 60)
-        print("Executable tersedia di: dist/Pokok_Kuning_Desktop_App/")
-        print("Jalankan create_installer.bat untuk membuat installer")
-        print("=" * 60)
-    else:
-        print("❌ Build gagal, silakan cek error di atas")
+    print(f"Spec file created: {spec_path}")
 
 if __name__ == "__main__":
-    main()
+    if build_exe():
+        print("\n✅ Build completed successfully!")
+        print("\nTo run the executable:")
+        print("1. Go to the 'dist/PokokKuningApp' folder")
+        print("2. Run 'PokokKuningApp.exe'")
+    else:
+        print("\n❌ Build failed!")
+        sys.exit(1)

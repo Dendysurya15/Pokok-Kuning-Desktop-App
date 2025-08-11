@@ -1,34 +1,19 @@
 @echo off
-echo ========================================
-echo BUILD POKOK KUNING DESKTOP APP
-echo ========================================
+echo ================================================
+echo        Pokok Kuning Desktop App Builder
+echo ================================================
 echo.
 
-REM Install PyInstaller jika belum ada
-echo Installing PyInstaller...
-python -m pip install pyinstaller
+cd /d "%~dp0"
 
-REM Build menggunakan spec file
+echo Installing required packages...
+pip install pyinstaller
+
 echo.
 echo Building executable...
-pyinstaller --clean pokok_kuning.spec
+python build_exe.py
 
-if %ERRORLEVEL% EQU 0 (
-    echo.
-    echo ========================================
-    echo BUILD BERHASIL!
-    echo ========================================
-    echo Executable tersedia di: dist\Pokok_Kuning_Desktop_App\
-    echo.
-    echo User bisa copy folder tersebut ke komputer mereka
-    echo dan jalankan file .exe langsung tanpa install apapun
-    echo ========================================
-) else (
-    echo.
-    echo ========================================
-    echo BUILD GAGAL!
-    echo ========================================
-    echo Silakan cek error di atas
-)
-
+echo.
+echo Build process completed!
+echo Check the dist/PokokKuningApp folder for the executable.
 pause
