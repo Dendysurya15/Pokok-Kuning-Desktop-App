@@ -9,11 +9,23 @@ from pathlib import Path
 # Define data files to include
 added_files = [
     ('model', 'model'),  # Include entire model directory
+    ('ui', 'ui'),        # Include ui package
+    ('core', 'core'),    # Include core package
+    ('utils', 'utils'),  # Include utils package
     ('README.md', '.'),
 ]
 
 # Hidden imports for all required packages
 hiddenimports = [
+    # Local modules
+    'ui',
+    'ui.main_window',
+    'core',
+    'core.processor',
+    'core.cli',
+    'utils',
+    'utils.config_manager',
+    
     # Ultralytics and YOLO
     'ultralytics',
     'ultralytics.models',
