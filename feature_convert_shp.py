@@ -336,7 +336,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Object Detection and Mapping with YOLO")
     parser.add_argument("--folder", required=True, help="Path to the folder containing images")
     parser.add_argument("--weights", required=True, help="Path to the YOLO weights file")
-    parser.add_argument("--imgsz", type=int, required=False, help="Image size for YOLO model", default=1280)  # Reduced default
+    parser.add_argument("--imgsz", type=int, required=False, help="Image size for YOLO model", default=10016)  # Reduced default
     parser.add_argument("--conf", type=float, required=False, help="Confidence threshold", default=0.2)
     parser.add_argument("--iou", type=float, required=False, help="IoU threshold", default=0.2)
     parser.add_argument("--classes", type=int, nargs='+', help="List of class indices to detect")
