@@ -68,7 +68,7 @@ def setup_database():
             "false",       # convert_kml
             "10000",       # max_det - Changed from 12000 to 10000 to match CLI version
             "3",           # line_width
-            "false",       # show_labels
+            "true",        # show_labels
             "false",       # show_conf
             "Full Blok",   # status_blok
             "true"         # save_annotated - Default to true to match CLI behavior

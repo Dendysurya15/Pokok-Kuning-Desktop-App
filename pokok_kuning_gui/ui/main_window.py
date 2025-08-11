@@ -251,7 +251,7 @@ class MainWindow(QMainWindow):
         
         # Show Labels
         self.show_labels_checkbox = QCheckBox("Show Labels")
-        default_show_labels = self.config.get("show_labels") if self.config.get("show_labels") else "false"
+        default_show_labels = self.config.get("show_labels") if self.config.get("show_labels") else "true"
         self.show_labels_checkbox.setChecked(default_show_labels == "true")
         layout.addWidget(self.show_labels_checkbox)
         
