@@ -81,16 +81,36 @@ class ProcessingThread(QThread):
         self.processor = ImageProcessor()
         
     def run(self):
-        start_time = time.time()
-        results = self.processor.process_folder(
-            self.folder_path, 
-            self.config,
-            progress_callback=self.progress_update.emit
-        )
-        end_time = time.time()
-        
-        results['total_time'] = end_time - start_time
-        self.processing_finished.emit(results)
+        print(f"Processing thread started for: {self.folder_path}")
+        try:
+            start_time = time.time()
+            results = self.processor.process_folder(
+                self.folder_path, 
+                self.config,
+                progress_callback=self.progress_update.emit
+            )
+            end_time = time.time()
+            
+            results['total_time'] = end_time - start_time
+            print("Processing thread finished successfully, emitting results...")
+            self.processing_finished.emit(results)
+            
+        except Exception as e:
+            print(f"❌ Critical error in processing thread: {str(e)}")
+            import traceback
+            print(f"Traceback: {traceback.format_exc()}")
+            
+            # Emit error result instead of crashing
+            error_results = {
+                "error": f"Processing failed: {str(e)}",
+                "successful_processed": 0,
+                "failed_processed": 0,
+                "total_files": 0,
+                "total_time": 0,
+                "total_abnormal": 0,
+                "total_normal": 0
+            }
+            self.processing_finished.emit(error_results)
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -628,7 +648,10 @@ class MainWindow(QMainWindow):
     
     def start_conversion(self):
         if not self.selected_folder:
+            print("No folder selected for conversion")
             return
+        
+        print(f"Starting conversion for folder: {self.selected_folder}")
         
         # Show progress dialog
         self.progress_dialog.show()
@@ -652,9 +675,11 @@ class MainWindow(QMainWindow):
         self.timer_thread.start()
         
         # Start processing in a separate thread
+        print("Creating processing thread...")
         self.processing_thread = ProcessingThread(self.selected_folder, config)
         self.processing_thread.progress_update.connect(self.update_progress)
         self.processing_thread.processing_finished.connect(self.processing_complete)
+        print("Starting processing thread...")
         self.processing_thread.start()
     
     def update_timer(self):
@@ -691,25 +716,42 @@ class MainWindow(QMainWindow):
         self.total_files = total
     
     def processing_complete(self, results):
-        self.timer_thread.terminate()
-        
-        self.total_processed = results.get("successful_processed", 0)
-        self.total_files = results.get("total_files", 0)
-        self.final_time = results.get("total_time", 0)
-        
-        # Show completion message
-        folder_name = os.path.basename(self.selected_folder)
-        
-        # Create a temporary message label for completion
-        completion_msg = QLabel(f"The folder '{folder_name}' has been converted successfully.")
-        completion_msg.setStyleSheet("color: green; font-weight: bold; padding: 10px;")
-        
-        # Show completion message in a popup
-        QMessageBox.information(self, "Conversion Complete", 
-                              f"The folder '{folder_name}' has been converted successfully!")
-        
-        # Hide progress dialog after 3 seconds
-        QTimer.singleShot(3000, self.progress_dialog.hide)
+        try:
+            print("Processing completed, handling results...")
+            self.timer_thread.terminate()
+            
+            # Check if there was an error
+            if "error" in results:
+                print(f"Processing failed with error: {results['error']}")
+                # Show error message
+                QMessageBox.critical(self, "Processing Error", 
+                                   f"Processing failed:\n{results['error']}")
+                self.progress_dialog.hide()
+                return
+            
+            self.total_processed = results.get("successful_processed", 0)
+            self.total_files = results.get("total_files", 0)
+            self.final_time = results.get("total_time", 0)
+            
+            # Show completion message
+            folder_name = os.path.basename(self.selected_folder)
+            
+            print(f"Processing completed successfully: {self.total_processed}/{self.total_files} files")
+            
+            # Show completion message in a popup
+            QMessageBox.information(self, "Conversion Complete", 
+                                  f"The folder '{folder_name}' has been converted successfully!\n\n"
+                                  f"Processed: {self.total_processed}/{self.total_files} files")
+            
+            # Hide progress dialog after 3 seconds
+            QTimer.singleShot(3000, self.progress_dialog.hide)
+            
+        except Exception as e:
+            print(f"❌ Error in processing_complete: {str(e)}")
+            import traceback
+            print(f"Traceback: {traceback.format_exc()}")
+            QMessageBox.critical(self, "Error", f"Error handling results: {str(e)}")
+            self.progress_dialog.hide()
     
     def show_results(self):
         msg = QMessageBox()

@@ -1,4 +1,5 @@
 import os
+import sys
 import time
 import json
 import gc
@@ -23,25 +24,73 @@ class ImageProcessor:
         # Store config
         self.config = config
         
-        # Load model - Use same path as CLI version
-        model_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 
-                                "model", f"{config['model']}.pt")
+        # Load model - Handle both development and executable environments
+        # Try multiple possible model paths
+        possible_paths = []
+        
+        # Method 1: From current script location (development)
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        dev_model_path = os.path.join(os.path.dirname(os.path.dirname(script_dir)), "model", f"{config['model']}.pt")
+        possible_paths.append(dev_model_path)
+        
+        # Method 2: From executable directory (PyInstaller)
+        if hasattr(sys, '_MEIPASS'):
+            # Running in PyInstaller bundle
+            exe_model_path = os.path.join(sys._MEIPASS, "model", f"{config['model']}.pt")
+            possible_paths.append(exe_model_path)
+        
+        # Method 3: Relative to executable location
+        exe_dir = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else os.path.dirname(os.path.abspath(__file__))
+        exe_relative_path = os.path.join(exe_dir, "model", f"{config['model']}.pt")
+        possible_paths.append(exe_relative_path)
+        
+        # Method 4: In same directory as executable
+        same_dir_path = os.path.join(exe_dir, f"{config['model']}.pt")
+        possible_paths.append(same_dir_path)
+        
+        model_path = None
+        for path in possible_paths:
+            print(f"  Checking model path: {path}")
+            sys.stdout.flush()
+            if os.path.exists(path):
+                model_path = path
+                print(f"  ✓ Found model at: {model_path}")
+                sys.stdout.flush()
+                break
+        
+        if model_path is None:
+            error_msg = f"Model {config['model']}.pt not found. Searched paths:\n"
+            for path in possible_paths:
+                error_msg += f"  - {path}\n"
+            print(error_msg)
+            return {
+                "error": error_msg,
+                "successful_processed": 0,
+                "failed_processed": 0,
+                "total_files": 0
+            }
         
         try:
+            print(f"  Loading YOLO model from: {model_path}")
             from ultralytics import YOLO
             self.model = YOLO(model_path)
+            print(f"  ✓ Model loaded successfully")
         except Exception as e:
+            error_msg = f"Failed to load model: {str(e)}"
+            print(f"  ✗ {error_msg}")
             return {
-                "error": f"Failed to load model: {str(e)}",
+                "error": error_msg,
                 "successful_processed": 0,
                 "failed_processed": 0,
                 "total_files": 0
             }
         
         # Get image files
+        print(f"  Scanning folder: {folder_path}")
         image_extensions = ('.png', '.jpg', '.jpeg', '.tif', '.tiff', '.bmp')
         image_files = [f for f in os.listdir(folder_path) if f.lower().endswith(image_extensions)]
         total_files = len(image_files)
+        print(f"  Found {total_files} image files to process")
         
         successful_processed = 0
         failed_processed = 0
@@ -52,6 +101,8 @@ class ImageProcessor:
         for index, image_file in enumerate(image_files):
             file_start_time = time.time()
             image_path = os.path.join(folder_path, image_file)
+            print(f"  Processing [{index+1}/{total_files}]: {image_file}")
+            sys.stdout.flush()
             
             try:
                 # Detect objects
@@ -126,11 +177,15 @@ class ImageProcessor:
                     }
                     progress_callback(progress)
                 
-                # Memory cleanup every 10 files
-                if (index + 1) % 10 == 0:
+                # Aggressive memory cleanup for executable
+                if (index + 1) % 5 == 0:  # More frequent cleanup
+                    print(f"    Memory cleanup after {index + 1} files...")
+                    sys.stdout.flush()
                     gc.collect()
                     
             except Exception as e:
+                print(f"    ❌ Error processing {image_file}: {str(e)}")
+                sys.stdout.flush()
                 failed_processed += 1
                 if progress_callback:
                     progress_callback({
@@ -145,12 +200,20 @@ class ImageProcessor:
                     })
         
         end_time = time.time()
+        total_time = end_time - start_time
+        
+        print(f"\n  Processing complete!")
+        print(f"  Successfully processed: {successful_processed}/{total_files}")
+        print(f"  Failed: {failed_processed}/{total_files}")
+        print(f"  Total abnormal objects: {total_abnormal}")
+        print(f"  Total normal objects: {total_normal}")
+        print(f"  Total time: {total_time:.2f} seconds")
         
         return {
             "successful_processed": successful_processed,
             "failed_processed": failed_processed,
             "total_files": total_files,
-            "total_time": end_time - start_time,
+            "total_time": total_time,
             "total_abnormal": total_abnormal,
             "total_normal": total_normal
         }
@@ -192,6 +255,8 @@ class ImageProcessor:
         """Object detection with error handling and optional annotation saving"""
         temp_image_path = None
         try:
+            print(f"    Starting detection for: {os.path.basename(image_path)}")
+            sys.stdout.flush()
             # Validate image first
             is_valid, width, height, mode, temp_path = self.validate_and_preprocess_image(image_path)
             if not is_valid:
@@ -210,6 +275,9 @@ class ImageProcessor:
                 except (ValueError, TypeError):
                     pass
                 
+            print(f"    Running YOLO prediction (imgsz={imgsz}, conf={conf}, iou={iou})...")
+            sys.stdout.flush()
+            
             results = self.model.predict(
                 source=processing_path, 
                 imgsz=imgsz, 
@@ -220,6 +288,9 @@ class ImageProcessor:
                 verbose=False,  # Reduce console output
                 save=False  # We'll handle saving annotated images ourselves
             )
+            
+            print(f"    YOLO prediction completed successfully")
+            sys.stdout.flush()
             
             abnormal_count = 0
             normal_count = 0
@@ -235,7 +306,12 @@ class ImageProcessor:
             
             # Save annotated frame if requested
             if save_annotated and annotated_folder and results:
+                print(f"    Saving annotated frame...")
+                sys.stdout.flush()
                 self.save_annotated_frame(results[0], image_path, annotated_folder, self.model.names)
+            
+            # Immediate memory cleanup after processing
+            gc.collect()
             
             progress = {
                 "abnormal_count": abnormal_count,
@@ -244,6 +320,9 @@ class ImageProcessor:
                 "image_mode": mode,
                 "converted": temp_path is not None
             }
+            
+            print(f"    Detection completed: {abnormal_count} abnormal, {normal_count} normal")
+            sys.stdout.flush()
     
             return results, progress
             

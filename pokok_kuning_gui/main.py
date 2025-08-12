@@ -13,22 +13,33 @@ from ui.main_window import MainWindow
 from utils.config_manager import setup_database
 
 def main():
-    # Set application details
-    QCoreApplication.setOrganizationName("Pokok Kuning")
-    QCoreApplication.setApplicationName("Pokok Kuning Desktop App")
-    
-    # Create the application
-    app = QApplication(sys.argv)
-    
-    # Setup database if it doesn't exist
-    setup_database()
-    
-    # Create and show the main window
-    window = MainWindow()
-    window.show()
-    
-    # Execute the application
-    sys.exit(app.exec_())
+    try:
+        print("Starting Pokok Kuning Desktop App...")
+        
+        # Set application details
+        QCoreApplication.setOrganizationName("Pokok Kuning")
+        QCoreApplication.setApplicationName("Pokok Kuning Desktop App")
+        
+        # Create the application
+        app = QApplication(sys.argv)
+        
+        # Setup database if it doesn't exist
+        setup_database()
+        
+        # Create and show the main window
+        print("Creating main window...")
+        window = MainWindow()
+        window.show()
+        print("Main window displayed. Ready for user interaction.")
+        
+        # Execute the application
+        sys.exit(app.exec_())
+        
+    except Exception as e:
+        print(f"❌ Critical application error: {str(e)}")
+        import traceback
+        print(f"Traceback: {traceback.format_exc()}")
+        input("Press Enter to exit...")
 
 if __name__ == "__main__":
     main()
