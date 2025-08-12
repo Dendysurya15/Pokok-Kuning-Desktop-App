@@ -217,6 +217,9 @@ class MainWindow(QMainWindow):
         if self.last_folder_from_config:
             self.set_folder_path(self.last_folder_from_config)
         
+        # Initialize model path display
+        self.update_model_path_display()
+        
     def create_header(self, parent_layout):
         """Create modern header with gradient background and logo"""
         header_widget = QWidget()
@@ -354,7 +357,48 @@ class MainWindow(QMainWindow):
         """Create modern AI model configuration card"""
         card = ModernCard("AI Model Configuration", "")
         
-        # Model AI dropdown
+        # Model AI input area (similar to folder selection)
+        model_input_layout = QHBoxLayout()
+        
+        # Model path display
+        self.model_path_input = QLabel("yolov8n-pokok-kuning.pt")
+        self.model_path_input.setStyleSheet("""
+            QLabel {
+                border: 2px dashed #cccccc;
+                border-radius: 8px;
+                padding: 12px;
+                background-color: #fafafa;
+                color: #666666;
+                min-height: 20px;
+            }
+        """)
+        model_input_layout.addWidget(self.model_path_input)
+        
+        # Browse button for model
+        browse_model_button = QPushButton("Browse")
+        browse_model_button.setStyleSheet("""
+            QPushButton {
+                background-color: #2196F3;
+                color: white;
+                border: none;
+                border-radius: 8px;
+                padding: 12px 20px;
+                font-weight: bold;
+                min-width: 80px;
+            }
+            QPushButton:hover {
+                background-color: #1976D2;
+            }
+            QPushButton:pressed {
+                background-color: #0D47A1;
+            }
+        """)
+        browse_model_button.clicked.connect(self.select_model)
+        model_input_layout.addWidget(browse_model_button)
+        
+        card.add_content(self.create_layout_widget(model_input_layout))
+        
+        # Model AI dropdown (kept for backward compatibility)
         model_layout = self.create_labeled_widget("Model AI", QComboBox())
         self.model_combo = model_layout.findChild(QComboBox)
         model_names = get_model_names()
@@ -378,6 +422,8 @@ class MainWindow(QMainWindow):
                 image: url(data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTIiIGhlaWdodD0iOCIgdmlld0JveD0iMCAwIDEyIDgiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxwYXRoIGQ9Ik0xIDFMNiA2TDExIDEiIHN0cm9rZT0iIzMzMyIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiLz4KPC9zdmc+);
             }
         """)
+        # Connect model combo change to update model path display
+        self.model_combo.currentTextChanged.connect(self.on_model_combo_changed)
         card.add_content(model_layout)
         
         # Status Blok radio buttons
@@ -503,18 +549,10 @@ class MainWindow(QMainWindow):
         """)
         card.add_content(conf_layout)
         
-        # Settings buttons layout
-        settings_buttons_layout = QHBoxLayout()
+        # Settings buttons
+        settings_layout = QHBoxLayout()
         
-        # Save Settings button
-        save_settings_button = QPushButton(" Save Settings")
-        
-        # Add save icon to save button
-        save_icon_path = self.get_asset_path('save.svg')
-        if os.path.exists(save_icon_path):
-            save_settings_button.setIcon(QIcon(save_icon_path))
-            save_settings_button.setIconSize(QSize(16, 16))
-        
+        save_settings_button = QPushButton("Save Settings")
         save_settings_button.setStyleSheet("""
             QPushButton {
                 background-color: #FF9800;
@@ -522,9 +560,8 @@ class MainWindow(QMainWindow):
                 border: none;
                 border-radius: 8px;
                 padding: 12px 20px;
-                font-size: 14px;
                 font-weight: bold;
-                margin-top: 16px;
+                min-width: 100px;
             }
             QPushButton:hover {
                 background-color: #F57C00;
@@ -533,40 +570,31 @@ class MainWindow(QMainWindow):
                 background-color: #E65100;
             }
         """)
-        save_settings_button.clicked.connect(self.save_configuration)
-        settings_buttons_layout.addWidget(save_settings_button)
+        save_settings_button.clicked.connect(self.save_settings)
+        settings_layout.addWidget(save_settings_button)
         
-        # Reset Settings button
-        reset_settings_button = QPushButton(" Reset Settings")
-        
-        # Add reset icon to reset button
-        reset_icon_path = self.get_asset_path('reset_icon.svg')
-        if os.path.exists(reset_icon_path):
-            reset_settings_button.setIcon(QIcon(reset_icon_path))
-            reset_settings_button.setIconSize(QSize(16, 16))
-        
+        reset_settings_button = QPushButton("Reset Settings")
         reset_settings_button.setStyleSheet("""
             QPushButton {
-                background-color: #f44336;
+                background-color: #F44336;
                 color: white;
                 border: none;
                 border-radius: 8px;
                 padding: 12px 20px;
-                font-size: 14px;
                 font-weight: bold;
-                margin-top: 16px;
+                min-width: 100px;
             }
             QPushButton:hover {
-                background-color: #d32f2f;
+                background-color: #D32F2F;
             }
             QPushButton:pressed {
-                background-color: #b71c1c;
+                background-color: #B71C1C;
             }
         """)
-        reset_settings_button.clicked.connect(self.reset_to_defaults)
-        settings_buttons_layout.addWidget(reset_settings_button)
+        reset_settings_button.clicked.connect(self.reset_settings)
+        settings_layout.addWidget(reset_settings_button)
         
-        card.add_content(self.create_layout_widget(settings_buttons_layout))
+        card.add_content(self.create_layout_widget(settings_layout))
         
         parent_layout.addWidget(card)
         
@@ -798,6 +826,169 @@ class MainWindow(QMainWindow):
                 current_config = self.get_current_config()
                 current_config["last_folder_path"] = folder_path
                 save_config(current_config)
+    
+    def save_settings(self):
+        """Save current settings to configuration"""
+        try:
+            current_config = self.get_current_config()
+            save_config(current_config)
+            QMessageBox.information(self, "Success", "Settings saved successfully!")
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to save settings: {str(e)}")
+    
+    def reset_settings(self):
+        """Reset settings to default values"""
+        try:
+            reply = QMessageBox.question(
+                self, 
+                "Reset Settings", 
+                "Are you sure you want to reset all settings to default values?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
+            )
+            
+            if reply == QMessageBox.Yes:
+                # Reset to default values
+                self.model_combo.setCurrentText("yolov8n-pokok-kuning")
+                self.imgsz_combo.setCurrentText("12800")
+                self.iou_slider.setValue(0.2)
+                self.conf_slider.setValue(0.2)
+                self.kml_checkbox.setChecked(False)
+                self.shp_checkbox.setChecked(True)
+                self.status_full_radio.setChecked(True)
+                self.status_half_radio.setChecked(False)
+                
+                # Update model path display
+                self.update_model_path_display()
+                
+                QMessageBox.information(self, "Success", "Settings reset to default values!")
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to reset settings: {str(e)}")
+
+    def select_model(self):
+        """Open a file dialog to select a .pt model file."""
+        print(f"🔍 [DEBUG] select_model() called")
+        
+        # Start from model directory if available
+        model_folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "model")
+        start_dir = model_folder if os.path.exists(model_folder) else ""
+        print(f"🔍 [DEBUG] Start directory: {start_dir}")
+        
+        model_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select Model File",
+            start_dir,
+            "Model Files (*.pt);;All Files (*)"
+        )
+        
+        print(f"🔍 [DEBUG] Selected model path: {model_path}")
+        
+        if model_path:
+            print(f"🔍 [DEBUG] Model path exists: {os.path.exists(model_path)}")
+            
+            # Update the model path display
+            self.model_path_input.setText(model_path)
+            
+            # Extract model name without extension and update combo box
+            model_name = os.path.splitext(os.path.basename(model_path))[0]
+            print(f"🔍 [DEBUG] Extracted model name: {model_name}")
+            
+            # Add to combo box if not already there
+            if self.model_combo.findText(model_path) == -1:
+                self.model_combo.addItem(model_path)
+                print(f"🔍 [DEBUG] Added custom model path to combo box: {model_path}")
+            
+            # Set as current selection
+            self.model_combo.setCurrentText(model_path)
+            print(f"🔍 [DEBUG] Set current model to: {model_path}")
+            
+            # Update display
+            self.update_model_path_display()
+            
+            # Auto-save the model path
+            current_config = self.get_current_config()
+            current_config["model"] = model_path  # Save full path for custom models
+            save_config(current_config)
+            print(f"🔍 [DEBUG] Saved model path to config: {model_path}")
+    
+    def on_model_combo_changed(self, text):
+        """Update the model path display when the model combo box changes."""
+        print(f"🔍 [DEBUG] Model combo changed to: {text}")
+        self.update_model_path_display()
+    
+    def update_model_path_display(self):
+        """Update the model path display to show the currently selected model."""
+        current_model_name = self.model_combo.currentText()
+        print(f"🔍 [DEBUG] update_model_path_display() called with: {current_model_name}")
+        
+        # Check if it's a custom model (full path)
+        if os.path.isabs(current_model_name) or current_model_name.startswith("C:"):
+            print(f"🔍 [DEBUG] Custom model detected (full path): {current_model_name}")
+            model_path = current_model_name
+            
+            if os.path.exists(model_path):
+                print(f"🔍 [DEBUG] Custom model exists: {model_path}")
+                self.model_path_input.setText(model_path)
+                # Reset to normal styling
+                self.model_path_input.setStyleSheet("""
+                    QLabel {
+                        border: 2px dashed #cccccc;
+                        border-radius: 8px;
+                        padding: 12px;
+                        background-color: #fafafa;
+                        color: #666666;
+                        min-height: 20px;
+                    }
+                """)
+            else:
+                print(f"🔍 [DEBUG] Custom model NOT found: {model_path}")
+                self.model_path_input.setText(f"Model not found: {os.path.basename(model_path)}")
+                # Show error styling
+                self.model_path_input.setStyleSheet("""
+                    QLabel {
+                        border: 2px dashed #f44336;
+                        border-radius: 8px;
+                        padding: 12px;
+                        background-color: #ffebee;
+                        color: #d32f2f;
+                        min-height: 20px;
+                    }
+                """)
+        else:
+            # It's a built-in model name, construct the path
+            print(f"🔍 [DEBUG] Built-in model detected: {current_model_name}")
+            model_folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "model")
+            model_path = os.path.join(model_folder, f"{current_model_name}.pt")
+            print(f"🔍 [DEBUG] Constructed model path: {model_path}")
+            
+            if os.path.exists(model_path):
+                print(f"🔍 [DEBUG] Built-in model exists: {model_path}")
+                self.model_path_input.setText(f"{current_model_name}.pt")
+                # Reset to normal styling
+                self.model_path_input.setStyleSheet("""
+                    QLabel {
+                        border: 2px dashed #cccccc;
+                        border-radius: 8px;
+                        padding: 12px;
+                        background-color: #fafafa;
+                        color: #666666;
+                        min-height: 20px;
+                    }
+                """)
+            else:
+                print(f"🔍 [DEBUG] Built-in model NOT found: {model_path}")
+                self.model_path_input.setText(f"Model not found: {current_model_name}.pt")
+                # Show error styling
+                self.model_path_input.setStyleSheet("""
+                    QLabel {
+                        border: 2px dashed #f44336;
+                        border-radius: 8px;
+                        padding: 12px;
+                        background-color: #ffebee;
+                        color: #d32f2f;
+                        min-height: 20px;
+                    }
+                """)
     
     def start_conversion(self):
         if not self.selected_folder:
@@ -1034,6 +1225,7 @@ class MainWindow(QMainWindow):
     def get_current_config(self):
         return {
             "model": self.model_combo.currentText(),
+            "model_path": self.get_full_model_path(),  # Add full model path
             "imgsz": self.imgsz_combo.currentText(),
             "iou": str(self.iou_slider.value()),
             "conf": str(self.conf_slider.value()),
@@ -1048,3 +1240,32 @@ class MainWindow(QMainWindow):
             "annotated_folder": os.path.join(self.selected_folder, "annotated") if self.selected_folder and self.save_annotated_checkbox.isChecked() else None,
             "last_folder_path": self.selected_folder
         }
+    
+    def get_full_model_path(self):
+        """Get the full path to the currently selected model"""
+        current_model_name = self.model_combo.currentText()
+        print(f"🔍 [DEBUG] get_full_model_path() called with: {current_model_name}")
+        
+        # If it's already a full path, return it
+        if os.path.isabs(current_model_name) or current_model_name.startswith("C:"):
+            print(f"🔍 [DEBUG] Custom model path detected: {current_model_name}")
+            if os.path.exists(current_model_name):
+                print(f"🔍 [DEBUG] Custom model exists, returning: {current_model_name}")
+                return current_model_name
+            else:
+                print(f"🔍 [DEBUG] Custom model NOT found: {current_model_name}")
+                return current_model_name  # Return as is for error handling
+        
+        # Otherwise, construct the path to the model folder
+        model_folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "model")
+        model_path = os.path.join(model_folder, f"{current_model_name}.pt")
+        print(f"🔍 [DEBUG] Constructed built-in model path: {model_path}")
+        
+        # Check if the model exists
+        if os.path.exists(model_path):
+            print(f"🔍 [DEBUG] Built-in model exists, returning: {model_path}")
+            return model_path
+        else:
+            print(f"🔍 [DEBUG] Built-in model NOT found: {model_path}")
+            # Return the model name as fallback
+            return current_model_name

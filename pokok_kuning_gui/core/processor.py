@@ -39,45 +39,63 @@ class ImageProcessor:
         # Try multiple possible model paths
         possible_paths = []
         
-        # Method 1: From current script location (development)
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        dev_model_path = os.path.join(os.path.dirname(os.path.dirname(script_dir)), "model", f"{config['model']}.pt")
-        possible_paths.append(dev_model_path)
-        
-        # Method 2: From executable directory (PyInstaller)
-        if hasattr(sys, '_MEIPASS'):
-            # Running in PyInstaller bundle
-            exe_model_path = os.path.join(sys._MEIPASS, "model", f"{config['model']}.pt")
-            possible_paths.append(exe_model_path)
-        
-        # Method 3: Relative to executable location
-        exe_dir = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else os.path.dirname(os.path.abspath(__file__))
-        exe_relative_path = os.path.join(exe_dir, "model", f"{config['model']}.pt")
-        possible_paths.append(exe_relative_path)
-        
-        # Method 4: In same directory as executable
-        same_dir_path = os.path.join(exe_dir, f"{config['model']}.pt")
-        possible_paths.append(same_dir_path)
-        
-        model_path = None
-        for path in possible_paths:
-            safe_print(f"  Checking model path: {path}")
-            if os.path.exists(path):
-                model_path = path
-                safe_print(f"  ✓ Found model at: {model_path}")
-                break
-        
-        if model_path is None:
-            error_msg = f"Model {config['model']}.pt not found. Searched paths:\n"
+        # Check if config['model'] is already a full path
+        model_name = config['model']
+        if os.path.isabs(model_name) or model_name.startswith("C:"):
+            # It's already a full path, use it directly
+            if os.path.exists(model_name):
+                model_path = model_name
+                safe_print(f"  ✓ Using custom model path: {model_path}")
+            else:
+                error_msg = f"Custom model path not found: {model_name}"
+                safe_print(f"  ✗ {error_msg}")
+                return {
+                    "error": error_msg,
+                    "successful_processed": 0,
+                    "failed_processed": 0,
+                    "total_files": 0
+                }
+        else:
+            # It's a model name, construct the path
+            # Method 1: From current script location (development)
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            dev_model_path = os.path.join(os.path.dirname(os.path.dirname(script_dir)), "model", f"{model_name}.pt")
+            possible_paths.append(dev_model_path)
+            
+            # Method 2: From executable directory (PyInstaller)
+            if hasattr(sys, '_MEIPASS'):
+                # Running in PyInstaller bundle
+                exe_model_path = os.path.join(sys._MEIPASS, "model", f"{model_name}.pt")
+                possible_paths.append(exe_model_path)
+            
+            # Method 3: Relative to executable location
+            exe_dir = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else os.path.dirname(os.path.abspath(__file__))
+            exe_relative_path = os.path.join(exe_dir, "model", f"{model_name}.pt")
+            possible_paths.append(exe_relative_path)
+            
+            # Method 4: In same directory as executable
+            same_dir_path = os.path.join(exe_dir, f"{model_name}.pt")
+            possible_paths.append(same_dir_path)
+            
+            model_path = None
             for path in possible_paths:
-                error_msg += f"  - {path}\n"
-            safe_print(error_msg)
-            return {
-                "error": error_msg,
-                "successful_processed": 0,
-                "failed_processed": 0,
-                "total_files": 0
-            }
+                safe_print(f"  Checking model path: {path}")
+                if os.path.exists(path):
+                    model_path = path
+                    safe_print(f"  ✓ Found model at: {model_path}")
+                    break
+            
+            if model_path is None:
+                error_msg = f"Model {model_name}.pt not found. Searched paths:\n"
+                for path in possible_paths:
+                    error_msg += f"  - {path}\n"
+                safe_print(error_msg)
+                return {
+                    "error": error_msg,
+                    "successful_processed": 0,
+                    "failed_processed": 0,
+                    "total_files": 0
+                }
         
         try:
             safe_print(f"  Loading YOLO model from: {model_path}")
