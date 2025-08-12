@@ -1,7 +1,14 @@
 import sys
 import os
+import multiprocessing
 from PyQt5.QtWidgets import QApplication
 from PyQt5.QtCore import QCoreApplication
+
+# ✅ Critical fix for PyInstaller executable - prevents multiple instances
+# This MUST be at the top after imports
+if __name__ == "__main__":
+    # Enable multiprocessing freeze support for PyInstaller
+    multiprocessing.freeze_support()
 
 # Add the current directory to the path so we can import our modules
 current_dir = os.path.dirname(os.path.abspath(__file__))

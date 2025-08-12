@@ -72,6 +72,12 @@ class ImageProcessor:
         
         try:
             print(f"  Loading YOLO model from: {model_path}")
+            # ✅ Better isolation for PyInstaller - import YOLO with proper guards
+            if getattr(sys, 'frozen', False):
+                # Running in PyInstaller bundle - use more careful import
+                import multiprocessing
+                multiprocessing.freeze_support()
+            
             from ultralytics import YOLO
             self.model = YOLO(model_path)
             print(f"  ✓ Model loaded successfully")
