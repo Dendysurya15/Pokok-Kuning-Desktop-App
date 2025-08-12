@@ -8,10 +8,11 @@ from pathlib import Path
 
 # Define data files to include
 added_files = [
-    ('model', 'model'),  # Include entire model directory
-    ('ui', 'ui'),        # Include ui package
-    ('core', 'core'),    # Include core package
-    ('utils', 'utils'),  # Include utils package
+    ('model', 'model'),      # Include entire model directory
+    ('ui', 'ui'),            # Include ui package
+    ('core', 'core'),        # Include core package
+    ('utils', 'utils'),      # Include utils package
+    ('assets', 'assets'),    # Include assets directory with icons and images
     ('README.md', '.'),
 ]
 
@@ -79,6 +80,7 @@ hiddenimports = [
     'PyQt5.QtGui', 
     'PyQt5.QtWidgets',
     'PyQt5.QtOpenGL',
+    'PyQt5.QtSvg',         # For SVG icon support
     'PyQt5.sip',
     
     # Other utilities
@@ -171,13 +173,13 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
-    console=True,  # Set to True for debugging
+    console=False,  # Set to True for debugging, False for release
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=None,  # Add 'icon.ico' if you have an icon file
+    icon='assets/img/logo.ico',  # Application icon
 )
 
 coll = COLLECT(

@@ -12,6 +12,17 @@ from shapely.geometry import Point, mapping
 import geopandas as gpd
 from fastkml import kml, geometry
 
+def safe_print(message):
+    """Safe print function that works in both console and windowed modes"""
+    try:
+        print(message)
+        # Safe flush - only flush if stdout exists and has flush method
+        if hasattr(sys.stdout, 'flush') and sys.stdout is not None:
+            sys.stdout.flush()
+    except (AttributeError, OSError):
+        # If print fails, just continue silently
+        pass
+
 class ImageProcessor:
     def __init__(self):
         self.model = None
@@ -50,19 +61,17 @@ class ImageProcessor:
         
         model_path = None
         for path in possible_paths:
-            print(f"  Checking model path: {path}")
-            sys.stdout.flush()
+            safe_print(f"  Checking model path: {path}")
             if os.path.exists(path):
                 model_path = path
-                print(f"  ✓ Found model at: {model_path}")
-                sys.stdout.flush()
+                safe_print(f"  ✓ Found model at: {model_path}")
                 break
         
         if model_path is None:
             error_msg = f"Model {config['model']}.pt not found. Searched paths:\n"
             for path in possible_paths:
                 error_msg += f"  - {path}\n"
-            print(error_msg)
+            safe_print(error_msg)
             return {
                 "error": error_msg,
                 "successful_processed": 0,
@@ -71,7 +80,7 @@ class ImageProcessor:
             }
         
         try:
-            print(f"  Loading YOLO model from: {model_path}")
+            safe_print(f"  Loading YOLO model from: {model_path}")
             # ✅ Better isolation for PyInstaller - import YOLO with proper guards
             if getattr(sys, 'frozen', False):
                 # Running in PyInstaller bundle - use more careful import
@@ -80,10 +89,10 @@ class ImageProcessor:
             
             from ultralytics import YOLO
             self.model = YOLO(model_path)
-            print(f"  ✓ Model loaded successfully")
+            safe_print(f"  ✓ Model loaded successfully")
         except Exception as e:
             error_msg = f"Failed to load model: {str(e)}"
-            print(f"  ✗ {error_msg}")
+            safe_print(f"  ✗ {error_msg}")
             return {
                 "error": error_msg,
                 "successful_processed": 0,
@@ -92,11 +101,11 @@ class ImageProcessor:
             }
         
         # Get image files
-        print(f"  Scanning folder: {folder_path}")
+        safe_print(f"  Scanning folder: {folder_path}")
         image_extensions = ('.png', '.jpg', '.jpeg', '.tif', '.tiff', '.bmp')
         image_files = [f for f in os.listdir(folder_path) if f.lower().endswith(image_extensions)]
         total_files = len(image_files)
-        print(f"  Found {total_files} image files to process")
+        safe_print(f"  Found {total_files} image files to process")
         
         successful_processed = 0
         failed_processed = 0
@@ -107,8 +116,7 @@ class ImageProcessor:
         for index, image_file in enumerate(image_files):
             file_start_time = time.time()
             image_path = os.path.join(folder_path, image_file)
-            print(f"  Processing [{index+1}/{total_files}]: {image_file}")
-            sys.stdout.flush()
+            safe_print(f"  Processing [{index+1}/{total_files}]: {image_file}")
             
             try:
                 # Detect objects
@@ -185,13 +193,11 @@ class ImageProcessor:
                 
                 # Aggressive memory cleanup for executable
                 if (index + 1) % 5 == 0:  # More frequent cleanup
-                    print(f"    Memory cleanup after {index + 1} files...")
-                    sys.stdout.flush()
+                    safe_print(f"    Memory cleanup after {index + 1} files...")
                     gc.collect()
                     
             except Exception as e:
-                print(f"    ❌ Error processing {image_file}: {str(e)}")
-                sys.stdout.flush()
+                safe_print(f"    ❌ Error processing {image_file}: {str(e)}")
                 failed_processed += 1
                 if progress_callback:
                     progress_callback({
@@ -208,12 +214,12 @@ class ImageProcessor:
         end_time = time.time()
         total_time = end_time - start_time
         
-        print(f"\n  Processing complete!")
-        print(f"  Successfully processed: {successful_processed}/{total_files}")
-        print(f"  Failed: {failed_processed}/{total_files}")
-        print(f"  Total abnormal objects: {total_abnormal}")
-        print(f"  Total normal objects: {total_normal}")
-        print(f"  Total time: {total_time:.2f} seconds")
+        safe_print(f"\n  Processing complete!")
+        safe_print(f"  Successfully processed: {successful_processed}/{total_files}")
+        safe_print(f"  Failed: {failed_processed}/{total_files}")
+        safe_print(f"  Total abnormal objects: {total_abnormal}")
+        safe_print(f"  Total normal objects: {total_normal}")
+        safe_print(f"  Total time: {total_time:.2f} seconds")
         
         return {
             "successful_processed": successful_processed,
@@ -261,8 +267,7 @@ class ImageProcessor:
         """Object detection with error handling and optional annotation saving"""
         temp_image_path = None
         try:
-            print(f"    Starting detection for: {os.path.basename(image_path)}")
-            sys.stdout.flush()
+            safe_print(f"    Starting detection for: {os.path.basename(image_path)}")
             # Validate image first
             is_valid, width, height, mode, temp_path = self.validate_and_preprocess_image(image_path)
             if not is_valid:
@@ -281,8 +286,7 @@ class ImageProcessor:
                 except (ValueError, TypeError):
                     pass
                 
-            print(f"    Running YOLO prediction (imgsz={imgsz}, conf={conf}, iou={iou})...")
-            sys.stdout.flush()
+            safe_print(f"    Running YOLO prediction (imgsz={imgsz}, conf={conf}, iou={iou})...")
             
             results = self.model.predict(
                 source=processing_path, 
@@ -295,8 +299,7 @@ class ImageProcessor:
                 save=False  # We'll handle saving annotated images ourselves
             )
             
-            print(f"    YOLO prediction completed successfully")
-            sys.stdout.flush()
+            safe_print(f"    YOLO prediction completed successfully")
             
             abnormal_count = 0
             normal_count = 0
@@ -312,8 +315,7 @@ class ImageProcessor:
             
             # Save annotated frame if requested
             if save_annotated and annotated_folder and results:
-                print(f"    Saving annotated frame...")
-                sys.stdout.flush()
+                safe_print(f"    Saving annotated frame...")
                 self.save_annotated_frame(results[0], image_path, annotated_folder, self.model.names)
             
             # Immediate memory cleanup after processing
@@ -327,8 +329,7 @@ class ImageProcessor:
                 "converted": temp_path is not None
             }
             
-            print(f"    Detection completed: {abnormal_count} abnormal, {normal_count} normal")
-            sys.stdout.flush()
+            safe_print(f"    Detection completed: {abnormal_count} abnormal, {normal_count} normal")
     
             return results, progress
             
@@ -357,7 +358,7 @@ class ImageProcessor:
             # Load original image
             image = cv2.imread(original_image_path)
             if image is None:
-                print(f"  Warning: Could not load image for annotation: {original_image_path}")
+                safe_print(f"  Warning: Could not load image for annotation: {original_image_path}")
                 return
             
             # Define colors for different classes (BGR format for OpenCV)
@@ -452,12 +453,12 @@ class ImageProcessor:
             # Save the image
             success = cv2.imwrite(output_path, image)
             if success:
-                print(f"  Saved annotated frame: {output_path}")
+                safe_print(f"  Saved annotated frame: {output_path}")
             else:
-                print(f"  Warning: Failed to save annotated frame: {output_path}")
+                safe_print(f"  Warning: Failed to save annotated frame: {output_path}")
                 
         except Exception as e:
-            print(f"  Error saving annotated frame: {e}")
+            safe_print(f"  Error saving annotated frame: {e}")
     
     def read_jgw(self, jgw_file):
         """Read JGW file with error handling"""

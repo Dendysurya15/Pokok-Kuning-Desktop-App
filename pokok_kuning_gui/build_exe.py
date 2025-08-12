@@ -87,6 +87,7 @@ added_files = [
     ('ui/*.py', 'ui'),
     ('core/*.py', 'core'), 
     ('utils/*.py', 'utils'),
+    ('assets', 'assets'),     # Include assets directory with icons and images
 ]
 
 # Hidden imports for ultralytics and other dependencies
@@ -114,6 +115,7 @@ hiddenimports = [
     'PyQt5.QtGui', 
     'PyQt5.QtWidgets',
     'PyQt5.QtOpenGL',
+    'PyQt5.QtSvg',
 ]
 
 # Collect all packages
@@ -169,13 +171,13 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
-    console=False,  # Set to True if you want console window
+    console=False,  # Set to True for debugging, False for release
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=None,  # Add icon path here if you have one
+    icon='assets/img/logo.ico',  # Application icon
 )
 
 coll = COLLECT(
