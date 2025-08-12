@@ -2,7 +2,7 @@ from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, 
     QFileDialog, QCheckBox, QProgressBar, QComboBox, QSlider, QGroupBox, 
     QRadioButton, QSpinBox, QMessageBox, QTextEdit, QDoubleSpinBox,
-    QFrame, QSizePolicy
+    QFrame, QSizePolicy, QScrollArea
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, pyqtSlot, QTimer, QSize
 from PyQt5.QtGui import QFont, QPixmap, QPalette, QColor, QLinearGradient, QPainter, QIcon
@@ -26,6 +26,7 @@ class ModernCard(QFrame):
         
     def setup_ui(self):
         self.setFrameStyle(QFrame.Box)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
         self.setStyleSheet("""
             QFrame {
                 background-color: white;
@@ -37,13 +38,14 @@ class ModernCard(QFrame):
         
         # Create title bar with icon
         title_layout = QHBoxLayout()
+        title_layout.setSpacing(12)  # Added spacing between icon and title
         if self.icon_text:
             icon_label = QLabel(self.icon_text)
             icon_label.setStyleSheet("""
                 QLabel {
-                    font-size: 18px;
+                    font-size: 20px;
                     color: #2196F3;
-                    margin-right: 8px;
+                    margin-right: 10px;
                 }
             """)
             title_layout.addWidget(icon_label)
@@ -51,9 +53,10 @@ class ModernCard(QFrame):
         title_label = QLabel(self.title)
         title_label.setStyleSheet("""
             QLabel {
-                font-size: 16px;
+                font-size: 18px;
                 font-weight: bold;
                 color: #333333;
+                margin-left: 5px;
             }
         """)
         title_layout.addWidget(title_label)
@@ -61,8 +64,10 @@ class ModernCard(QFrame):
         
         # Create main content layout
         self.content_layout = QVBoxLayout()
+        self.content_layout.setSpacing(16)  # Increased spacing between content elements
+        self.content_layout.setContentsMargins(8, 8, 8, 8)
         self.content_layout.addLayout(title_layout)
-        self.content_layout.addSpacing(16)
+        self.content_layout.addSpacing(20)  # Added more space after title
         
         self.setLayout(self.content_layout)
     
@@ -131,6 +136,7 @@ class MainWindow(QMainWindow):
         # Set window properties
         self.setWindowTitle("Pokok Kuning Desktop App")
         self.setGeometry(100, 100, 1000, 800)
+        self.setMinimumSize(800, 600)  # Set minimum window size
         
         # Set window icon
         icon_path = self.get_asset_path('logo.png')
@@ -159,11 +165,17 @@ class MainWindow(QMainWindow):
             """)
         
         # Create central widget and layout
+        central_scroll = QScrollArea()
+        central_scroll.setWidgetResizable(True)
+        central_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+
         central_widget = QWidget()
         main_layout = QVBoxLayout(central_widget)
         main_layout.setContentsMargins(20, 20, 20, 20)
         main_layout.setSpacing(20)
-        self.setCentralWidget(central_widget)
+
+        central_scroll.setWidget(central_widget)
+        self.setCentralWidget(central_scroll)
         
         # Load configuration
         self.config = load_config()
@@ -177,30 +189,42 @@ class MainWindow(QMainWindow):
         # Create header
         self.create_header(main_layout)
         
-        # Create main content area with cards
+        # Create main content area with cards - Responsive layout
         content_layout = QHBoxLayout()
-        
+        content_layout.setSpacing(20)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+
         # Left column
         left_column = QVBoxLayout()
         left_column.setSpacing(20)
-        
+
         # Folder Selection Card
         self.create_folder_selection_card(left_column)
-        
+
         # Annotation Settings Card
         self.create_annotation_settings_card(left_column)
-        
-        content_layout.addLayout(left_column)
-        
+
+        left_container = QWidget()
+        left_container.setLayout(left_column)
+        left_container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
+
         # Right column
         right_column = QVBoxLayout()
         right_column.setSpacing(20)
-        
+
         # AI Model Configuration Card
         self.create_ai_model_config_card(right_column)
-        
-        content_layout.addLayout(right_column)
-        
+
+        right_container = QWidget()
+        right_container.setLayout(right_column)
+        right_container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
+
+        content_layout.addWidget(left_container, 1)
+        content_layout.addWidget(right_container, 1)
+        content_layout.setStretch(0, 1)
+        content_layout.setStretch(1, 1)
+        content_layout.setAlignment(Qt.AlignTop)
+
         main_layout.addLayout(content_layout)
         
         # Create progress dialog (hidden initially)
@@ -235,35 +259,40 @@ class MainWindow(QMainWindow):
                 padding: 20px;
             }
         """)
-        header_widget.setFixedHeight(100)
+        header_widget.setFixedHeight(120)  # Increased height for better spacing
         
         header_layout = QHBoxLayout(header_widget)
         header_layout.setContentsMargins(20, 20, 20, 20)
+        header_layout.setSpacing(20)  # Added spacing between elements
         
         # Logo
         logo_path = self.get_asset_path('logo.png')
         if os.path.exists(logo_path):
             logo_label = QLabel()
             pixmap = QPixmap(logo_path)
-            # Scale logo to fit header height
-            scaled_pixmap = pixmap.scaledToHeight(60, Qt.SmoothTransformation)
+            # Scale logo to fit header height with proper margins
+            scaled_pixmap = pixmap.scaledToHeight(70, Qt.SmoothTransformation)
             logo_label.setPixmap(scaled_pixmap)
+            logo_label.setFixedWidth(80)  # Fixed width to prevent overlap
             header_layout.addWidget(logo_label)
         
-        # App title
-        title_label = QLabel("Pokok Kuning Desktop App")
+        # App title with better spacing
+        title_label = QLabel("Digital Architect — PT Sawit Sumbernan Sarana")
         title_label.setStyleSheet("""
             QLabel {
                 color: white;
-                font-size: 24px;
+                font-size: 26px;
                 font-weight: bold;
                 background-color: transparent;
+                margin-left: 10px;
+                margin-right: 10px;
             }
         """)
+        title_label.setMinimumWidth(300)  # Ensure minimum width for title
         header_layout.addWidget(title_label)
         header_layout.addStretch()
         
-        # Show Log button
+        # Show Log button with better positioning
         show_log_button = QPushButton("Show Progress")
         show_log_button.setStyleSheet("""
             QPushButton {
@@ -271,9 +300,11 @@ class MainWindow(QMainWindow):
                 color: white;
                 border: 2px solid rgba(255, 255, 255, 0.3);
                 border-radius: 8px;
-                padding: 8px 16px;
+                padding: 10px 20px;
                 font-weight: bold;
-                min-width: 80px;
+                font-size: 14px;
+                min-width: 120px;
+                min-height: 40px;
             }
             QPushButton:hover {
                 background-color: rgba(255, 255, 255, 0.3);
@@ -292,8 +323,9 @@ class MainWindow(QMainWindow):
         """Create modern folder selection card"""
         card = ModernCard("Folder Selection", "")
         
-        # Folder input area
+        # Folder input area with better spacing
         folder_input_layout = QHBoxLayout()
+        folder_input_layout.setSpacing(15)  # Added spacing between elements
         
         # Initial folder display (will be updated later if there's a saved folder)
         self.folder_path_input = QLabel("No folder selected")
@@ -301,13 +333,16 @@ class MainWindow(QMainWindow):
             QLabel {
                 border: 2px dashed #cccccc;
                 border-radius: 8px;
-                padding: 12px;
+                padding: 15px;
                 background-color: #fafafa;
                 color: #666666;
-                min-height: 20px;
+                min-height: 25px;
+                font-size: 13px;
+                margin-right: 10px;
             }
         """)
-        folder_input_layout.addWidget(self.folder_path_input)
+        self.folder_path_input.setWordWrap(True)  # Enable word wrapping for long paths
+        folder_input_layout.addWidget(self.folder_path_input, 1)  # Give it more space
         
         browse_button = QPushButton("Browse")
         
@@ -315,7 +350,7 @@ class MainWindow(QMainWindow):
         folder_icon_path = self.get_asset_path('folder_icon.svg')
         if os.path.exists(folder_icon_path):
             browse_button.setIcon(QIcon(folder_icon_path))
-            browse_button.setIconSize(QSize(16, 16))
+            browse_button.setIconSize(QSize(18, 18))  # Slightly larger icon
         
         browse_button.setStyleSheet("""
             QPushButton {
@@ -323,9 +358,11 @@ class MainWindow(QMainWindow):
                 color: white;
                 border: none;
                 border-radius: 8px;
-                padding: 12px 20px;
+                padding: 15px 25px;
                 font-weight: bold;
-                min-width: 80px;
+                font-size: 13px;
+                min-width: 100px;
+                min-height: 25px;
             }
             QPushButton:hover {
                 background-color: #1976D2;
@@ -339,17 +376,19 @@ class MainWindow(QMainWindow):
         
         card.add_content(self.create_layout_widget(folder_input_layout))
         
-        # Save annotated file checkbox
+        # Save annotated file checkbox with better spacing
         self.save_annotated_checkbox = QCheckBox("Save Annotated File")
         self.save_annotated_checkbox.setStyleSheet("""
             QCheckBox {
                 font-size: 14px;
                 color: #333333;
-                spacing: 8px;
+                spacing: 10px;
+                margin-top: 15px;
+                margin-bottom: 15px;
             }
             QCheckBox::indicator {
-                width: 18px;
-                height: 18px;
+                width: 20px;
+                height: 20px;
                 border: 2px solid #2196F3;
                 border-radius: 4px;
             }
@@ -362,20 +401,23 @@ class MainWindow(QMainWindow):
         self.save_annotated_checkbox.setChecked(default_save_annotated == "true")
         card.add_content(self.save_annotated_checkbox)
         
-        # Results area
+        # Results area with better visibility
         results_label = QLabel("Results will appear here after conversion")
         results_label.setStyleSheet("""
             QLabel {
                 border: 2px dashed #cccccc;
                 border-radius: 8px;
-                padding: 20px;
+                padding: 25px;
                 background-color: #fafafa;
                 color: #999999;
                 text-align: center;
-                min-height: 60px;
+                min-height: 80px;
+                font-size: 13px;
+                margin-top: 10px;
             }
         """)
         results_label.setAlignment(Qt.AlignCenter)
+        results_label.setWordWrap(True)  # Enable word wrapping
         card.add_content(results_label)
         
         parent_layout.addWidget(card)
@@ -384,24 +426,28 @@ class MainWindow(QMainWindow):
         """Create modern AI model configuration card"""
         card = ModernCard("AI Model Configuration", "")
         
-        # Model AI input area (similar to folder selection)
+        # Model AI input area (similar to folder selection) with better spacing
         model_input_layout = QHBoxLayout()
+        model_input_layout.setSpacing(15)  # Added spacing between elements
         
-        # Model path display
+        # Model path display with better visibility
         self.model_path_input = QLabel("yolov8n-pokok-kuning.pt")
         self.model_path_input.setStyleSheet("""
             QLabel {
                 border: 2px dashed #cccccc;
                 border-radius: 8px;
-                padding: 12px;
+                padding: 15px;
                 background-color: #fafafa;
                 color: #666666;
-                min-height: 20px;
+                min-height: 25px;
+                font-size: 13px;
+                margin-right: 10px;
             }
         """)
-        model_input_layout.addWidget(self.model_path_input)
+        self.model_path_input.setWordWrap(True)  # Enable word wrapping for long paths
+        model_input_layout.addWidget(self.model_path_input, 1)  # Give it more space
         
-        # Browse button for model
+        # Browse button for model with better sizing
         browse_model_button = QPushButton("Browse")
         browse_model_button.setStyleSheet("""
             QPushButton {
@@ -409,9 +455,11 @@ class MainWindow(QMainWindow):
                 color: white;
                 border: none;
                 border-radius: 8px;
-                padding: 12px 20px;
+                padding: 15px 25px;
                 font-weight: bold;
-                min-width: 80px;
+                font-size: 13px;
+                min-width: 100px;
+                min-height: 25px;
             }
             QPushButton:hover {
                 background-color: #1976D2;
@@ -425,7 +473,7 @@ class MainWindow(QMainWindow):
         
         card.add_content(self.create_layout_widget(model_input_layout))
         
-        # Model AI dropdown (kept for backward compatibility)
+        # Model AI dropdown (kept for backward compatibility) with better spacing
         model_layout = self.create_labeled_widget("Model AI", QComboBox())
         self.model_combo = model_layout.findChild(QComboBox)
         model_names = get_model_names()
@@ -437,13 +485,15 @@ class MainWindow(QMainWindow):
             QComboBox {
                 border: 2px solid #e0e0e0;
                 border-radius: 8px;
-                padding: 8px 12px;
+                padding: 12px 16px;
                 background-color: white;
-                min-height: 20px;
+                min-height: 25px;
+                font-size: 13px;
+                margin-top: 8px;
             }
             QComboBox::drop-down {
                 border: none;
-                width: 20px;
+                width: 25px;
             }
             QComboBox::down-arrow {
                 image: url(data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTIiIGhlaWdodD0iOCIgdmlld0JveD0iMCAwIDEyIDgiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxwYXRoIGQ9Ik0xIDFMNiA2TDExIDEiIHN0cm9rZT0iIzMzMyIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiLz4KPC9zdmc+);
@@ -453,12 +503,19 @@ class MainWindow(QMainWindow):
         self.model_combo.currentTextChanged.connect(self.on_model_combo_changed)
         card.add_content(model_layout)
         
-        # Status Blok radio buttons
+        # Status Blok radio buttons with better spacing
         status_label = QLabel("Status Blok")
-        status_label.setStyleSheet("font-weight: bold; color: #333333; margin-top: 16px;")
+        status_label.setStyleSheet("""
+            font-weight: bold; 
+            color: #333333; 
+            margin-top: 20px; 
+            margin-bottom: 10px;
+            font-size: 14px;
+        """)
         card.add_content(status_label)
         
         status_layout = QHBoxLayout()
+        status_layout.setSpacing(20)  # Added spacing between radio buttons
         self.status_full_radio = QRadioButton("Full Blok")
         self.status_half_radio = QRadioButton("Setengah Blok")
         
@@ -473,13 +530,14 @@ class MainWindow(QMainWindow):
                 QRadioButton {
                     font-size: 14px;
                     color: #333333;
-                    spacing: 8px;
+                    spacing: 12px;
+                    margin: 5px 0px;
                 }
                 QRadioButton::indicator {
-                    width: 18px;
-                    height: 18px;
+                    width: 20px;
+                    height: 20px;
                     border: 2px solid #2196F3;
-                    border-radius: 9px;
+                    border-radius: 10px;
                 }
                 QRadioButton::indicator:checked {
                     background-color: #2196F3;
@@ -490,25 +548,28 @@ class MainWindow(QMainWindow):
         
         card.add_content(self.create_layout_widget(status_layout))
         
-        # Image Size dropdown
-        imgsize_layout = self.create_labeled_widget("Image Size", QComboBox())
-        self.imgsz_combo = imgsize_layout.findChild(QComboBox)
-        self.imgsz_combo.addItems(["640", "1280", "1920", "9024", "12800"])
-        default_imgsz = self.config.get("imgsz") if self.config.get("imgsz") else "12800"
-        if default_imgsz in ["640", "1280", "1920", "9024", "12800"]:
-            self.imgsz_combo.setCurrentText(default_imgsz)
-        self.imgsz_combo.setStyleSheet("""
-            QComboBox {
+        # Image Size input with better spacing
+        imgsize_layout = self.create_labeled_widget("Image Size", QSpinBox())
+        self.imgsz_input = imgsize_layout.findChild(QSpinBox)
+        self.imgsz_input.setRange(1000, 99999)
+        self.imgsz_input.setValue(12800)  # Default value
+        default_imgsz = int(self.config.get("imgsz")) if self.config.get("imgsz") else 12800
+        if 1000 <= default_imgsz <= 99999:
+            self.imgsz_input.setValue(default_imgsz)
+        self.imgsz_input.setStyleSheet("""
+            QSpinBox {
                 border: 2px solid #e0e0e0;
                 border-radius: 8px;
-                padding: 8px 12px;
+                padding: 12px 16px;
                 background-color: white;
-                min-height: 20px;
+                min-height: 25px;
+                font-size: 13px;
+                margin-top: 8px;
             }
         """)
         card.add_content(imgsize_layout)
         
-        # IOU Threshold
+        # IOU Threshold with better spacing
         iou_layout = self.create_labeled_widget("IOU Threshold", QDoubleSpinBox())
         self.iou_slider = iou_layout.findChild(QDoubleSpinBox)
         self.iou_slider.setRange(0.0, 1.0)
@@ -519,15 +580,18 @@ class MainWindow(QMainWindow):
             QDoubleSpinBox {
                 border: 2px solid #e0e0e0;
                 border-radius: 8px;
-                padding: 8px 12px;
+                padding: 12px 16px;
                 background-color: white;
-                min-height: 20px;
+                min-height: 25px;
+                font-size: 13px;
+                margin-top: 8px;
             }
         """)
         card.add_content(iou_layout)
         
-        # Conversion checkboxes
+        # Conversion checkboxes with better spacing
         conversion_layout = QHBoxLayout()
+        conversion_layout.setSpacing(20)  # Added spacing between checkboxes
         
         self.kml_checkbox = QCheckBox("Convert to KML")
         default_kml = self.config.get("convert_kml") if self.config.get("convert_kml") else "false"
@@ -542,11 +606,12 @@ class MainWindow(QMainWindow):
                 QCheckBox {
                     font-size: 14px;
                     color: #333333;
-                    spacing: 8px;
+                    spacing: 12px;
+                    margin: 8px 0px;
                 }
                 QCheckBox::indicator {
-                    width: 18px;
-                    height: 18px;
+                    width: 20px;
+                    height: 20px;
                     border: 2px solid #2196F3;
                     border-radius: 4px;
                 }
@@ -558,7 +623,7 @@ class MainWindow(QMainWindow):
         
         card.add_content(self.create_layout_widget(conversion_layout))
         
-        # Confidence Threshold
+        # Confidence Threshold with better spacing
         conf_layout = self.create_labeled_widget("Confidence Threshold", QDoubleSpinBox())
         self.conf_slider = conf_layout.findChild(QDoubleSpinBox)
         self.conf_slider.setRange(0.0, 1.0)
@@ -569,15 +634,18 @@ class MainWindow(QMainWindow):
             QDoubleSpinBox {
                 border: 2px solid #e0e0e0;
                 border-radius: 8px;
-                padding: 8px 12px;
+                padding: 12px 16px;
                 background-color: white;
-                min-height: 20px;
+                min-height: 25px;
+                font-size: 13px;
+                margin-top: 8px;
             }
         """)
         card.add_content(conf_layout)
         
-        # Settings buttons
+        # Settings buttons with better spacing
         settings_layout = QHBoxLayout()
+        settings_layout.setSpacing(15)  # Added spacing between buttons
         
         save_settings_button = QPushButton("Save Settings")
         save_settings_button.setStyleSheet("""
@@ -586,9 +654,11 @@ class MainWindow(QMainWindow):
                 color: white;
                 border: none;
                 border-radius: 8px;
-                padding: 12px 20px;
+                padding: 15px 25px;
                 font-weight: bold;
-                min-width: 100px;
+                font-size: 13px;
+                min-width: 120px;
+                min-height: 25px;
             }
             QPushButton:hover {
                 background-color: #F57C00;
@@ -607,9 +677,11 @@ class MainWindow(QMainWindow):
                 color: white;
                 border: none;
                 border-radius: 8px;
-                padding: 12px 20px;
+                padding: 15px 25px;
                 font-weight: bold;
-                min-width: 100px;
+                font-size: 13px;
+                min-width: 120px;
+                min-height: 25px;
             }
             QPushButton:hover {
                 background-color: #D32F2F;
@@ -629,7 +701,7 @@ class MainWindow(QMainWindow):
         """Create modern annotation settings card"""
         card = ModernCard("Annotation Settings", "")
         
-        # Max Detection
+        # Max Detection with better spacing
         max_det_layout = self.create_labeled_widget("Max Detection", QSpinBox())
         self.max_det_input = max_det_layout.findChild(QSpinBox)
         self.max_det_input.setRange(1, 50000)
@@ -639,14 +711,16 @@ class MainWindow(QMainWindow):
             QSpinBox {
                 border: 2px solid #e0e0e0;
                 border-radius: 8px;
-                padding: 8px 12px;
+                padding: 12px 16px;
                 background-color: white;
-                min-height: 20px;
+                min-height: 25px;
+                font-size: 13px;
+                margin-top: 8px;
             }
         """)
         card.add_content(max_det_layout)
         
-        # Line Width
+        # Line Width with better spacing
         line_width_layout = self.create_labeled_widget("Line Width", QSpinBox())
         self.line_width_input = line_width_layout.findChild(QSpinBox)
         self.line_width_input.setRange(1, 10)
@@ -656,15 +730,18 @@ class MainWindow(QMainWindow):
             QSpinBox {
                 border: 2px solid #e0e0e0;
                 border-radius: 8px;
-                padding: 8px 12px;
+                padding: 12px 16px;
                 background-color: white;
-                min-height: 20px;
+                min-height: 25px;
+                font-size: 13px;
+                margin-top: 8px;
             }
         """)
         card.add_content(line_width_layout)
         
-        # Display checkboxes
+        # Display checkboxes with better spacing
         display_layout = QHBoxLayout()
+        display_layout.setSpacing(20)  # Added spacing between checkboxes
         
         self.show_labels_checkbox = QCheckBox("Show Labels")
         default_show_labels = self.config.get("show_labels") if self.config.get("show_labels") else "true"
@@ -679,11 +756,12 @@ class MainWindow(QMainWindow):
                 QCheckBox {
                     font-size: 14px;
                     color: #333333;
-                    spacing: 8px;
+                    spacing: 12px;
+                    margin: 8px 0px;
                 }
                 QCheckBox::indicator {
-                    width: 18px;
-                    height: 18px;
+                    width: 20px;
+                    height: 20px;
                     border: 2px solid #2196F3;
                     border-radius: 4px;
                 }
@@ -695,14 +773,14 @@ class MainWindow(QMainWindow):
         
         card.add_content(self.create_layout_widget(display_layout))
         
-        # Start Processing button
+        # Start Processing button with better spacing and sizing
         start_button = QPushButton(" Start Processing")
         
         # Add rocket icon to start button
         rocket_icon_path = self.get_asset_path('rocket_icon.svg')
         if os.path.exists(rocket_icon_path):
             start_button.setIcon(QIcon(rocket_icon_path))
-            start_button.setIconSize(QSize(20, 20))
+            start_button.setIconSize(QSize(22, 22))  # Slightly larger icon
         
         start_button.setStyleSheet("""
             QPushButton {
@@ -710,10 +788,12 @@ class MainWindow(QMainWindow):
                 color: white;
                 border: none;
                 border-radius: 8px;
-                padding: 16px 24px;
+                padding: 18px 28px;
                 font-size: 16px;
                 font-weight: bold;
-                margin-top: 16px;
+                margin-top: 20px;
+                margin-bottom: 10px;
+                min-height: 50px;
             }
             QPushButton:hover {
                 background-color: #45a049;
@@ -730,6 +810,7 @@ class MainWindow(QMainWindow):
     def create_labeled_widget(self, label_text, widget):
         """Create a labeled widget with consistent styling"""
         layout = QVBoxLayout()
+        layout.setSpacing(8)  # Added consistent spacing
         
         label = QLabel(label_text)
         label.setStyleSheet("""
@@ -737,6 +818,7 @@ class MainWindow(QMainWindow):
                 font-weight: bold;
                 color: #333333;
                 margin-bottom: 8px;
+                font-size: 14px;
             }
         """)
         layout.addWidget(label)
@@ -748,6 +830,7 @@ class MainWindow(QMainWindow):
         """Create a widget from a layout"""
         widget = QWidget()
         widget.setLayout(layout)
+        widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
         return widget
     
     def set_folder_path(self, folder_path):
@@ -762,28 +845,39 @@ class MainWindow(QMainWindow):
             has_tiff_files = any(f.lower().endswith(('.tif', '.tiff')) for f in os.listdir(folder_path))
             
             if has_tiff_files:
-                self.folder_path_input.setText(f"Selected Folder: {folder_path}")
+                # Truncate long folder paths for better display
+                display_path = folder_path
+                if len(folder_path) > 50:
+                    display_path = "..." + folder_path[-47:]
+                
+                self.folder_path_input.setText(f"Selected Folder: {display_path}")
+                self.folder_path_input.setToolTip(folder_path)  # Show full path on hover
                 self.folder_path_input.setStyleSheet("""
                     QLabel {
                         border: 2px solid #2196F3;
                         border-radius: 8px;
-                        padding: 12px;
+                        padding: 15px;
                         background-color: #e3f2fd;
                         color: #1976D2;
-                        min-height: 20px;
+                        min-height: 25px;
+                        font-size: 13px;
+                        margin-right: 10px;
                     }
                 """)
                 self.save_annotated_checkbox.setEnabled(True)
             else:
                 self.folder_path_input.setText("The folder does not contain any .tif files.")
+                self.folder_path_input.setToolTip("")  # Clear tooltip
                 self.folder_path_input.setStyleSheet("""
                     QLabel {
                         border: 2px dashed #cccccc;
                         border-radius: 8px;
-                        padding: 12px;
+                        padding: 15px;
                         background-color: #fafafa;
                         color: #666666;
-                        min-height: 20px;
+                        min-height: 25px;
+                        font-size: 13px;
+                        margin-right: 10px;
                     }
                 """)
                 self.save_annotated_checkbox.setEnabled(False)
@@ -884,7 +978,7 @@ class MainWindow(QMainWindow):
     def clear_log(self):
         """Clear the log display in the progress dialog"""
         self.activity_log.clear()
-        self.activity_log.append("=== POKOK KUNING DESKTOP APP - ACTIVITY LOG ===\n")
+        self.activity_log.append("=== Digital Architect — PT Sawit Sumbernan Sarana - ACTIVITY LOG ===\n")
         self.activity_log.append(f"Cleared at: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
         self.activity_log.append("-" * 50 + "\n")
 
@@ -926,7 +1020,7 @@ class MainWindow(QMainWindow):
             if reply == QMessageBox.Yes:
                 # Reset to default values
                 self.model_combo.setCurrentText("yolov8n-pokok-kuning")
-                self.imgsz_combo.setCurrentText("12800")
+                self.imgsz_input.setValue(12800)
                 self.iou_slider.setValue(0.2)
                 self.conf_slider.setValue(0.2)
                 self.kml_checkbox.setChecked(False)
@@ -1004,30 +1098,41 @@ class MainWindow(QMainWindow):
             
             if os.path.exists(model_path):
                 print(f"🔍 [DEBUG] Custom model exists: {model_path}")
-                self.model_path_input.setText(model_path)
+                # Truncate long paths for better display
+                display_path = model_path
+                if len(model_path) > 50:
+                    display_path = "..." + model_path[-47:]
+                
+                self.model_path_input.setText(display_path)
+                self.model_path_input.setToolTip(model_path)  # Show full path on hover
                 # Reset to normal styling
                 self.model_path_input.setStyleSheet("""
                     QLabel {
                         border: 2px dashed #cccccc;
                         border-radius: 8px;
-                        padding: 12px;
+                        padding: 15px;
                         background-color: #fafafa;
                         color: #666666;
-                        min-height: 20px;
+                        min-height: 25px;
+                        font-size: 13px;
+                        margin-right: 10px;
                     }
                 """)
             else:
                 print(f"🔍 [DEBUG] Custom model NOT found: {model_path}")
                 self.model_path_input.setText(f"Model not found: {os.path.basename(model_path)}")
+                self.model_path_input.setToolTip("")  # Clear tooltip
                 # Show error styling
                 self.model_path_input.setStyleSheet("""
                     QLabel {
                         border: 2px dashed #f44336;
                         border-radius: 8px;
-                        padding: 12px;
+                        padding: 15px;
                         background-color: #ffebee;
                         color: #d32f2f;
-                        min-height: 20px;
+                        min-height: 25px;
+                        font-size: 13px;
+                        margin-right: 10px;
                     }
                 """)
         else:
@@ -1041,29 +1146,35 @@ class MainWindow(QMainWindow):
             if os.path.exists(model_path):
                 print(f"🔍 [DEBUG] Built-in model exists: {model_path}")
                 self.model_path_input.setText(f"{current_model_name}.pt")
+                self.model_path_input.setToolTip(model_path)  # Show full path on hover
                 # Reset to normal styling
                 self.model_path_input.setStyleSheet("""
                     QLabel {
                         border: 2px dashed #cccccc;
                         border-radius: 8px;
-                        padding: 12px;
+                        padding: 15px;
                         background-color: #fafafa;
                         color: #666666;
-                        min-height: 20px;
+                        min-height: 25px;
+                        font-size: 13px;
+                        margin-right: 10px;
                     }
                 """)
             else:
                 print(f"🔍 [DEBUG] Built-in model NOT found: {model_path}")
                 self.model_path_input.setText(f"Model not found: {current_model_name}.pt")
+                self.model_path_input.setToolTip("")  # Clear tooltip
                 # Show error styling
                 self.model_path_input.setStyleSheet("""
                     QLabel {
                         border: 2px dashed #f44336;
                         border-radius: 8px;
-                        padding: 12px;
+                        padding: 15px;
                         background-color: #ffebee;
                         color: #d32f2f;
-                        min-height: 20px;
+                        min-height: 25px;
+                        font-size: 13px;
+                        margin-right: 10px;
                     }
                 """)
     
@@ -1265,7 +1376,7 @@ class MainWindow(QMainWindow):
         self.status_half_radio.setChecked(False)
         
         # Reset Image Size
-        self.imgsz_combo.setCurrentText("12800")
+        self.imgsz_input.setValue(12800)
         
         # Reset IOU Threshold  
         self.iou_slider.setValue(0.2)
@@ -1330,7 +1441,7 @@ class MainWindow(QMainWindow):
         return {
             "model": self.model_combo.currentText(),
             "model_path": self.get_full_model_path(),  # Add full model path
-            "imgsz": self.imgsz_combo.currentText(),
+            "imgsz": str(self.imgsz_input.value()),
             "iou": str(self.iou_slider.value()),
             "conf": str(self.conf_slider.value()),
             "convert_shp": "true" if self.shp_checkbox.isChecked() else "false",
@@ -1392,7 +1503,7 @@ class MainWindow(QMainWindow):
             self.progress_dialog.show()
             # Initialize log with header if it's empty
             if not self.activity_log.toPlainText().strip():
-                self.activity_log.append("=== POKOK KUNING DESKTOP APP - ACTIVITY LOG ===\n")
+                self.activity_log.append("=== Digital Architect — PT Sawit Sumbernan Sarana - ACTIVITY LOG ===\n")
                 self.activity_log.append(f"Started at: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
                 self.activity_log.append("-" * 50 + "\n")
         else:
