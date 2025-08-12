@@ -454,6 +454,9 @@ class MainWindow(QMainWindow):
         """)
         card.add_content(conf_layout)
         
+        # Settings buttons layout
+        settings_buttons_layout = QHBoxLayout()
+        
         # Save Settings button
         save_settings_button = QPushButton("💾 Save Settings")
         save_settings_button.setStyleSheet("""
@@ -475,7 +478,32 @@ class MainWindow(QMainWindow):
             }
         """)
         save_settings_button.clicked.connect(self.save_configuration)
-        card.add_content(save_settings_button)
+        settings_buttons_layout.addWidget(save_settings_button)
+        
+        # Reset Settings button
+        reset_settings_button = QPushButton("🔄 Reset Settings")
+        reset_settings_button.setStyleSheet("""
+            QPushButton {
+                background-color: #f44336;
+                color: white;
+                border: none;
+                border-radius: 8px;
+                padding: 12px 20px;
+                font-size: 14px;
+                font-weight: bold;
+                margin-top: 16px;
+            }
+            QPushButton:hover {
+                background-color: #d32f2f;
+            }
+            QPushButton:pressed {
+                background-color: #b71c1c;
+            }
+        """)
+        reset_settings_button.clicked.connect(self.reset_to_defaults)
+        settings_buttons_layout.addWidget(reset_settings_button)
+        
+        card.add_content(self.create_layout_widget(settings_buttons_layout))
         
         parent_layout.addWidget(card)
         
@@ -836,6 +864,102 @@ class MainWindow(QMainWindow):
         if save_config(config):
             # Show success message in a popup
             QMessageBox.information(self, "Success", "Configuration has been saved successfully!")
+    
+    def reset_to_defaults(self):
+        """Reset all settings to default values"""
+        # Show confirmation dialog
+        reply = QMessageBox.question(
+            self, 
+            "Reset Settings", 
+            "Are you sure you want to reset all settings to default values?\n\nThis action cannot be undone.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            # Reset all UI elements to default values
+            self.reset_ui_to_defaults()
+            
+            # Save default configuration to database
+            default_config = self.get_default_config()
+            if save_config(default_config):
+                QMessageBox.information(self, "Reset Complete", "All settings have been reset to default values!")
+    
+    def reset_ui_to_defaults(self):
+        """Reset all UI elements to their default values"""
+        # Get available models
+        model_names = get_model_names()
+        default_model = model_names[0] if model_names else "yolov8n-pokok-kuning"
+        
+        # Reset Model AI
+        if default_model in model_names:
+            self.model_combo.setCurrentText(default_model)
+        
+        # Reset Status Blok
+        self.status_full_radio.setChecked(True)
+        self.status_half_radio.setChecked(False)
+        
+        # Reset Image Size
+        self.imgsz_combo.setCurrentText("12800")
+        
+        # Reset IOU Threshold  
+        self.iou_slider.setValue(0.2)
+        
+        # Reset conversion checkboxes
+        self.kml_checkbox.setChecked(False)
+        self.shp_checkbox.setChecked(True)
+        
+        # Reset Confidence Threshold
+        self.conf_slider.setValue(0.2)
+        
+        # Reset Max Detection
+        self.max_det_input.setValue(10000)
+        
+        # Reset Line Width
+        self.line_width_input.setValue(3)
+        
+        # Reset display checkboxes
+        self.show_labels_checkbox.setChecked(True)
+        self.show_conf_checkbox.setChecked(False)
+        
+        # Reset Save Annotated File
+        self.save_annotated_checkbox.setChecked(True)
+        self.save_annotated_checkbox.setEnabled(False)
+        
+        # Clear folder selection
+        self.selected_folder = None
+        self.folder_path_input.setText("No folder selected")
+        self.folder_path_input.setStyleSheet("""
+            QLabel {
+                border: 2px dashed #cccccc;
+                border-radius: 8px;
+                padding: 12px;
+                background-color: #fafafa;
+                color: #666666;
+                min-height: 20px;
+            }
+        """)
+    
+    def get_default_config(self):
+        """Get default configuration values"""
+        model_names = get_model_names()
+        default_model = model_names[0] if model_names else "yolov8n-pokok-kuning"
+        
+        return {
+            "model": default_model,
+            "imgsz": "12800",
+            "iou": "0.2",
+            "conf": "0.2",
+            "convert_shp": "true",
+            "convert_kml": "false",
+            "max_det": "10000",
+            "line_width": "3",
+            "show_labels": "true",
+            "show_conf": "false",
+            "status_blok": "Full Blok",
+            "save_annotated": "true",
+            "last_folder_path": None
+        }
     
     def get_current_config(self):
         return {
