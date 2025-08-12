@@ -4,8 +4,9 @@ from PyQt5.QtWidgets import (
     QRadioButton, QSpinBox, QMessageBox, QTextEdit, QDoubleSpinBox,
     QFrame, QSizePolicy
 )
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, pyqtSlot, QTimer
-from PyQt5.QtGui import QFont, QPixmap, QPalette, QColor, QLinearGradient, QPainter
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, pyqtSlot, QTimer, QSize
+from PyQt5.QtGui import QFont, QPixmap, QPalette, QColor, QLinearGradient, QPainter, QIcon
+from PyQt5.QtSvg import QSvgWidget
 
 import os
 import sys
@@ -117,15 +118,45 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.init_ui()
         
+    def get_asset_path(self, filename):
+        """Get the full path to an asset file"""
+        if hasattr(sys, '_MEIPASS'):
+            # Running as PyInstaller bundle
+            return os.path.join(sys._MEIPASS, 'assets', 'img', filename)
+        else:
+            # Running as script
+            return os.path.join(os.path.dirname(os.path.dirname(__file__)), 'assets', 'img', filename)
+        
     def init_ui(self):
         # Set window properties
         self.setWindowTitle("Pokok Kuning Desktop App")
         self.setGeometry(100, 100, 1000, 800)
-        self.setStyleSheet("""
-            QMainWindow {
-                background-color: #f5f5f5;
-            }
-        """)
+        
+        # Set window icon
+        icon_path = self.get_asset_path('logo.png')
+        if os.path.exists(icon_path):
+            self.setWindowIcon(QIcon(icon_path))
+        
+        # Set background image
+        bg_path = self.get_asset_path('background.jpg')
+        if os.path.exists(bg_path):
+            self.setStyleSheet(f"""
+                QMainWindow {{
+                    background-image: url({bg_path});
+                    background-repeat: no-repeat;
+                    background-position: center;
+                    background-attachment: fixed;
+                }}
+                QWidget {{
+                    background-color: rgba(245, 245, 245, 0.9);
+                }}
+            """)
+        else:
+            self.setStyleSheet("""
+                QMainWindow {
+                    background-color: #f5f5f5;
+                }
+            """)
         
         # Create central widget and layout
         central_widget = QWidget()
@@ -187,7 +218,7 @@ class MainWindow(QMainWindow):
             self.set_folder_path(self.last_folder_from_config)
         
     def create_header(self, parent_layout):
-        """Create modern header with gradient background"""
+        """Create modern header with gradient background and logo"""
         header_widget = QWidget()
         header_widget.setStyleSheet("""
             QWidget {
@@ -197,10 +228,20 @@ class MainWindow(QMainWindow):
                 padding: 20px;
             }
         """)
-        header_widget.setFixedHeight(80)
+        header_widget.setFixedHeight(100)
         
         header_layout = QHBoxLayout(header_widget)
         header_layout.setContentsMargins(20, 20, 20, 20)
+        
+        # Logo
+        logo_path = self.get_asset_path('logo.png')
+        if os.path.exists(logo_path):
+            logo_label = QLabel()
+            pixmap = QPixmap(logo_path)
+            # Scale logo to fit header height
+            scaled_pixmap = pixmap.scaledToHeight(60, Qt.SmoothTransformation)
+            logo_label.setPixmap(scaled_pixmap)
+            header_layout.addWidget(logo_label)
         
         # App title
         title_label = QLabel("Pokok Kuning Desktop App")
@@ -209,6 +250,7 @@ class MainWindow(QMainWindow):
                 color: white;
                 font-size: 24px;
                 font-weight: bold;
+                background-color: transparent;
             }
         """)
         header_layout.addWidget(title_label)
@@ -218,7 +260,7 @@ class MainWindow(QMainWindow):
         
     def create_folder_selection_card(self, parent_layout):
         """Create modern folder selection card"""
-        card = ModernCard("Folder Selection", "📁")
+        card = ModernCard("Folder Selection", "")
         
         # Folder input area
         folder_input_layout = QHBoxLayout()
@@ -238,6 +280,13 @@ class MainWindow(QMainWindow):
         folder_input_layout.addWidget(self.folder_path_input)
         
         browse_button = QPushButton("Browse")
+        
+        # Add folder icon to browse button
+        folder_icon_path = self.get_asset_path('folder_icon.svg')
+        if os.path.exists(folder_icon_path):
+            browse_button.setIcon(QIcon(folder_icon_path))
+            browse_button.setIconSize(QSize(16, 16))
+        
         browse_button.setStyleSheet("""
             QPushButton {
                 background-color: #2196F3;
@@ -303,7 +352,7 @@ class MainWindow(QMainWindow):
         
     def create_ai_model_config_card(self, parent_layout):
         """Create modern AI model configuration card"""
-        card = ModernCard("AI Model Configuration", "🔧")
+        card = ModernCard("AI Model Configuration", "")
         
         # Model AI dropdown
         model_layout = self.create_labeled_widget("Model AI", QComboBox())
@@ -458,7 +507,14 @@ class MainWindow(QMainWindow):
         settings_buttons_layout = QHBoxLayout()
         
         # Save Settings button
-        save_settings_button = QPushButton("💾 Save Settings")
+        save_settings_button = QPushButton(" Save Settings")
+        
+        # Add save icon to save button
+        save_icon_path = self.get_asset_path('save.svg')
+        if os.path.exists(save_icon_path):
+            save_settings_button.setIcon(QIcon(save_icon_path))
+            save_settings_button.setIconSize(QSize(16, 16))
+        
         save_settings_button.setStyleSheet("""
             QPushButton {
                 background-color: #FF9800;
@@ -481,7 +537,14 @@ class MainWindow(QMainWindow):
         settings_buttons_layout.addWidget(save_settings_button)
         
         # Reset Settings button
-        reset_settings_button = QPushButton("🔄 Reset Settings")
+        reset_settings_button = QPushButton(" Reset Settings")
+        
+        # Add reset icon to reset button
+        reset_icon_path = self.get_asset_path('reset_icon.svg')
+        if os.path.exists(reset_icon_path):
+            reset_settings_button.setIcon(QIcon(reset_icon_path))
+            reset_settings_button.setIconSize(QSize(16, 16))
+        
         reset_settings_button.setStyleSheet("""
             QPushButton {
                 background-color: #f44336;
@@ -509,7 +572,7 @@ class MainWindow(QMainWindow):
         
     def create_annotation_settings_card(self, parent_layout):
         """Create modern annotation settings card"""
-        card = ModernCard("Annotation Settings", "✏️")
+        card = ModernCard("Annotation Settings", "")
         
         # Max Detection
         max_det_layout = self.create_labeled_widget("Max Detection", QSpinBox())
@@ -578,7 +641,14 @@ class MainWindow(QMainWindow):
         card.add_content(self.create_layout_widget(display_layout))
         
         # Start Processing button
-        start_button = QPushButton("🚀 Start Processing")
+        start_button = QPushButton(" Start Processing")
+        
+        # Add rocket icon to start button
+        rocket_icon_path = self.get_asset_path('rocket_icon.svg')
+        if os.path.exists(rocket_icon_path):
+            start_button.setIcon(QIcon(rocket_icon_path))
+            start_button.setIconSize(QSize(20, 20))
+        
         start_button.setStyleSheet("""
             QPushButton {
                 background-color: #4CAF50;
