@@ -57,9 +57,12 @@ class ImageProcessor:
                 }
         else:
             # It's a model name, construct the path
-            # Method 1: From current script location (development)
-            script_dir = os.path.dirname(os.path.abspath(__file__))
-            dev_model_path = os.path.join(os.path.dirname(os.path.dirname(script_dir)), "model", f"{model_name}.pt")
+            # Use the EXACT same path resolution as main_window.py
+            # From ui/main_window.py: os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "model")
+            script_dir = os.path.dirname(os.path.abspath(__file__))  # core/
+            parent_dir = os.path.dirname(script_dir)                 # pokok_kuning_gui/
+            model_folder = os.path.join(parent_dir, "model")         # pokok_kuning_gui/model/
+            dev_model_path = os.path.join(model_folder, f"{model_name}.pt")
             possible_paths.append(dev_model_path)
             
             # Method 2: From executable directory (PyInstaller)

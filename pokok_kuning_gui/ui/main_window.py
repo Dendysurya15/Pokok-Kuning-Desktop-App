@@ -220,6 +220,10 @@ class MainWindow(QMainWindow):
         # Initialize model path display
         self.update_model_path_display()
         
+        # Add initial log message
+        self.add_log_message("Application started successfully")
+        self.add_log_message(f"Available models: {', '.join(get_model_names())}")
+        
     def create_header(self, parent_layout):
         """Create modern header with gradient background and logo"""
         header_widget = QWidget()
@@ -258,6 +262,29 @@ class MainWindow(QMainWindow):
         """)
         header_layout.addWidget(title_label)
         header_layout.addStretch()
+        
+        # Show Log button
+        show_log_button = QPushButton("Show Progress")
+        show_log_button.setStyleSheet("""
+            QPushButton {
+                background-color: rgba(255, 255, 255, 0.2);
+                color: white;
+                border: 2px solid rgba(255, 255, 255, 0.3);
+                border-radius: 8px;
+                padding: 8px 16px;
+                font-weight: bold;
+                min-width: 80px;
+            }
+            QPushButton:hover {
+                background-color: rgba(255, 255, 255, 0.3);
+                border-color: rgba(255, 255, 255, 0.5);
+            }
+            QPushButton:pressed {
+                background-color: rgba(255, 255, 255, 0.4);
+            }
+        """)
+        show_log_button.clicked.connect(self.toggle_progress_display)
+        header_layout.addWidget(show_log_button)
         
         parent_layout.addWidget(header_widget)
         
@@ -794,6 +821,28 @@ class MainWindow(QMainWindow):
         self.activity_log.setReadOnly(True)
         layout.addWidget(self.activity_log)
         
+        # Save Log button
+        save_log_button = QPushButton("Save Log")
+        save_log_button.setStyleSheet("""
+            QPushButton {
+                background-color: #4CAF50;
+                color: white;
+                border: none;
+                border-radius: 8px;
+                padding: 12px 20px;
+                font-weight: bold;
+                min-width: 100px;
+            }
+            QPushButton:hover {
+                background-color: #45a049;
+            }
+            QPushButton:pressed {
+                background-color: #3d8b40;
+            }
+        """)
+        save_log_button.clicked.connect(self.save_log)
+        layout.addWidget(save_log_button)
+        
         # Annotated progress section (initially hidden)
         self.annotated_group = QGroupBox("Saving Annotated Images")
         annotated_layout = QVBoxLayout()
@@ -812,6 +861,33 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.annotated_group)
         self.annotated_group.hide()
     
+    def create_logging_section(self):
+        # This function is no longer needed as logging is integrated into the progress dialog
+        pass
+    
+    def add_log_message(self, message):
+        """Add a message to the activity log in the progress dialog"""
+        timestamp = time.strftime('%H:%M:%S')
+        formatted_message = f"[{timestamp}] {message}"
+        
+        # Add to activity log in the progress dialog
+        self.activity_log.append(formatted_message)
+        
+        # Auto-scroll to bottom
+        self.activity_log.verticalScrollBar().setValue(
+            self.activity_log.verticalScrollBar().maximum()
+        )
+        
+        # Also print to console for debugging
+        print(formatted_message)
+    
+    def clear_log(self):
+        """Clear the log display in the progress dialog"""
+        self.activity_log.clear()
+        self.activity_log.append("=== POKOK KUNING DESKTOP APP - ACTIVITY LOG ===\n")
+        self.activity_log.append(f"Cleared at: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+        self.activity_log.append("-" * 50 + "\n")
+
     def select_folder(self):
         # Start from last used folder if available
         start_dir = self.selected_folder if self.selected_folder and os.path.exists(self.selected_folder) else ""
@@ -957,7 +1033,8 @@ class MainWindow(QMainWindow):
         else:
             # It's a built-in model name, construct the path
             print(f"🔍 [DEBUG] Built-in model detected: {current_model_name}")
-            model_folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "model")
+            # Use the same path resolution as get_model_names()
+            model_folder = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "model")
             model_path = os.path.join(model_folder, f"{current_model_name}.pt")
             print(f"🔍 [DEBUG] Constructed model path: {model_path}")
             
@@ -997,6 +1074,9 @@ class MainWindow(QMainWindow):
         
         print(f"Starting conversion for folder: {self.selected_folder}")
         
+        # Add log message
+        self.add_log_message(f"Starting conversion for folder: {self.selected_folder}")
+        
         # Show progress dialog
         self.progress_dialog.show()
         self.progress_bar.setValue(0)
@@ -1012,6 +1092,12 @@ class MainWindow(QMainWindow):
         # Get current configuration
         config = self.get_current_config()
         
+        # Log configuration
+        self.add_log_message(f"Using model: {config.get('model', 'Unknown')}")
+        self.add_log_message(f"Image size: {config.get('imgsz', 'Unknown')}")
+        self.add_log_message(f"Confidence threshold: {config.get('conf', 'Unknown')}")
+        self.add_log_message(f"IOU threshold: {config.get('iou', 'Unknown')}")
+        
         # Start timer
         self.start_time = time.time()
         self.timer_thread = QThread()
@@ -1020,10 +1106,12 @@ class MainWindow(QMainWindow):
         
         # Start processing in a separate thread
         print("Creating processing thread...")
+        self.add_log_message("Creating processing thread...")
         self.processing_thread = ProcessingThread(self.selected_folder, config)
         self.processing_thread.progress_update.connect(self.update_progress)
         self.processing_thread.processing_finished.connect(self.processing_complete)
         print("Starting processing thread...")
+        self.add_log_message("Starting processing thread...")
         self.processing_thread.start()
     
     def update_timer(self):
@@ -1053,8 +1141,9 @@ class MainWindow(QMainWindow):
         self.progress_bar.setValue(int(progress * 100))
         self.progress_text.setText(f"{processed} of {total} images processed")
         
-        # Update activity log
-        self.activity_log.append(f"{current_file} - {abnormal_count} abnormal, {normal_count} normal - {status}")
+        # Update activity log using new logging function
+        log_message = f"Processing {current_file} - {abnormal_count} abnormal, {normal_count} normal - {status}"
+        self.add_log_message(log_message)
         
         # Save total files count for results
         self.total_files = total
@@ -1062,11 +1151,14 @@ class MainWindow(QMainWindow):
     def processing_complete(self, results):
         try:
             print("Processing completed, handling results...")
+            self.add_log_message("Processing completed, handling results...")
             self.timer_thread.terminate()
             
             # Check if there was an error
             if "error" in results:
-                print(f"Processing failed with error: {results['error']}")
+                error_msg = f"Processing failed with error: {results['error']}"
+                print(error_msg)
+                self.add_log_message(error_msg)
                 # Show error message
                 QMessageBox.critical(self, "Processing Error", 
                                    f"Processing failed:\n{results['error']}")
@@ -1080,7 +1172,15 @@ class MainWindow(QMainWindow):
             # Show completion message
             folder_name = os.path.basename(self.selected_folder)
             
-            print(f"Processing completed successfully: {self.total_processed}/{self.total_files} files")
+            completion_msg = f"Processing completed successfully: {self.total_processed}/{self.total_files} files"
+            print(completion_msg)
+            self.add_log_message(completion_msg)
+            
+            # Log final statistics
+            self.add_log_message(f"Total processing time: {self.final_time:.2f} seconds")
+            self.add_log_message(f"Total abnormal objects: {self.total_abnormal}")
+            self.add_log_message(f"Total normal objects: {self.total_normal}")
+            self.add_log_message("=" * 50)
             
             # Show completion message in a popup
             QMessageBox.information(self, "Conversion Complete", 
@@ -1091,9 +1191,13 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(3000, self.progress_dialog.hide)
             
         except Exception as e:
-            print(f"❌ Error in processing_complete: {str(e)}")
+            error_msg = f"❌ Error in processing_complete: {str(e)}"
+            print(error_msg)
+            self.add_log_message(error_msg)
             import traceback
-            print(f"Traceback: {traceback.format_exc()}")
+            traceback_msg = f"Traceback: {traceback.format_exc()}"
+            print(traceback_msg)
+            self.add_log_message(traceback_msg)
             QMessageBox.critical(self, "Error", f"Error handling results: {str(e)}")
             self.progress_dialog.hide()
     
@@ -1269,3 +1373,27 @@ class MainWindow(QMainWindow):
             print(f"🔍 [DEBUG] Built-in model NOT found: {model_path}")
             # Return the model name as fallback
             return current_model_name
+
+    def save_log(self):
+        """Save the current activity log to a text file."""
+        folder_path = self.selected_folder if self.selected_folder else "output"
+        os.makedirs(folder_path, exist_ok=True)
+        log_file_path = os.path.join(folder_path, "activity_log.txt")
+        
+        with open(log_file_path, "w") as f:
+            f.write(self.activity_log.toPlainText())
+        
+        QMessageBox.information(self, "Log Saved", f"Activity log has been saved to:\n{log_file_path}")
+        print(f"Activity log saved to: {log_file_path}")
+
+    def toggle_progress_display(self):
+        """Toggle the visibility of the progress dialog."""
+        if self.progress_dialog.isHidden():
+            self.progress_dialog.show()
+            # Initialize log with header if it's empty
+            if not self.activity_log.toPlainText().strip():
+                self.activity_log.append("=== POKOK KUNING DESKTOP APP - ACTIVITY LOG ===\n")
+                self.activity_log.append(f"Started at: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+                self.activity_log.append("-" * 50 + "\n")
+        else:
+            self.progress_dialog.hide()
