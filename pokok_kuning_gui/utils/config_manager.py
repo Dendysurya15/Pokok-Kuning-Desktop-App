@@ -32,11 +32,12 @@ def setup_database():
             show_labels TEXT,
             show_conf TEXT,
             status_blok TEXT,
-            save_annotated TEXT
+            save_annotated TEXT,
+            last_folder_path TEXT
         )
     ''')
 
-    # Check if save_annotated column exists
+    # Check if new columns exist and add them if missing
     cursor.execute("PRAGMA table_info(configuration)")
     columns = [column[1] for column in cursor.fetchall()]
     
@@ -44,6 +45,11 @@ def setup_database():
         # Add the new column to existing table
         cursor.execute("ALTER TABLE configuration ADD COLUMN save_annotated TEXT DEFAULT 'true'")
         print("Added save_annotated column to existing database")
+    
+    if 'last_folder_path' not in columns:
+        # Add the new column to existing table
+        cursor.execute("ALTER TABLE configuration ADD COLUMN last_folder_path TEXT DEFAULT NULL")
+        print("Added last_folder_path column to existing database")
 
     # Check if we already have configuration data
     cursor.execute("SELECT COUNT(*) FROM configuration")
@@ -57,8 +63,8 @@ def setup_database():
         cursor.execute('''
             INSERT INTO configuration (
                 model, imgsz, iou, conf, convert_shp, convert_kml, 
-                max_det, line_width, show_labels, show_conf, status_blok, save_annotated
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                max_det, line_width, show_labels, show_conf, status_blok, save_annotated, last_folder_path
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             default_model,  # model
             "12800",       # imgsz - Changed from 1280 to 12800 to match CLI version
@@ -71,7 +77,8 @@ def setup_database():
             "true",        # show_labels
             "false",       # show_conf
             "Full Blok",   # status_blok
-            "true"         # save_annotated - Default to true to match CLI behavior
+            "true",        # save_annotated - Default to true to match CLI behavior
+            None           # last_folder_path - No default folder
         ))
     
     conn.commit()
@@ -102,7 +109,8 @@ def load_config():
         "show_labels": row[9],
         "show_conf": row[10],
         "status_blok": row[11],
-        "save_annotated": row[12]
+        "save_annotated": row[12],
+        "last_folder_path": row[13] if len(row) > 13 else None
     }
     return config
 
@@ -115,8 +123,8 @@ def save_config(config):
     cursor.execute('''
         INSERT INTO configuration (
             model, imgsz, iou, conf, convert_shp, convert_kml,
-            max_det, line_width, show_labels, show_conf, status_blok, save_annotated
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            max_det, line_width, show_labels, show_conf, status_blok, save_annotated, last_folder_path
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', (
         config["model"], 
         config["imgsz"], 
@@ -129,7 +137,8 @@ def save_config(config):
         config["show_labels"], 
         config["show_conf"],
         config["status_blok"],
-        config["save_annotated"]
+        config["save_annotated"],
+        config.get("last_folder_path", None)
     ))
     
     conn.commit()

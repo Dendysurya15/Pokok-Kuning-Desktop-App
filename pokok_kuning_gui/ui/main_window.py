@@ -137,6 +137,12 @@ class MainWindow(QMainWindow):
         # Load configuration
         self.config = load_config()
         
+        # Initialize selected folder
+        self.selected_folder = None
+        
+        # Load last used folder if available (will be set after UI creation)
+        self.last_folder_from_config = self.config.get("last_folder_path") if self.config.get("last_folder_path") and os.path.exists(self.config.get("last_folder_path")) else None
+        
         # Create header
         self.create_header(main_layout)
         
@@ -170,12 +176,15 @@ class MainWindow(QMainWindow):
         self.create_progress_section()
         
         # Initialize variables
-        self.selected_folder = None
         self.processing_thread = None
         self.total_processed = 0
         self.total_files = 0
         self.total_abnormal = 0
         self.total_normal = 0
+        
+        # Load last used folder after UI is fully created
+        if self.last_folder_from_config:
+            self.set_folder_path(self.last_folder_from_config)
         
     def create_header(self, parent_layout):
         """Create modern header with gradient background"""
@@ -214,6 +223,7 @@ class MainWindow(QMainWindow):
         # Folder input area
         folder_input_layout = QHBoxLayout()
         
+        # Initial folder display (will be updated later if there's a saved folder)
         self.folder_path_input = QLabel("No folder selected")
         self.folder_path_input.setStyleSheet("""
             QLabel {
@@ -444,6 +454,29 @@ class MainWindow(QMainWindow):
         """)
         card.add_content(conf_layout)
         
+        # Save Settings button
+        save_settings_button = QPushButton("💾 Save Settings")
+        save_settings_button.setStyleSheet("""
+            QPushButton {
+                background-color: #FF9800;
+                color: white;
+                border: none;
+                border-radius: 8px;
+                padding: 12px 20px;
+                font-size: 14px;
+                font-weight: bold;
+                margin-top: 16px;
+            }
+            QPushButton:hover {
+                background-color: #F57C00;
+            }
+            QPushButton:pressed {
+                background-color: #E65100;
+            }
+        """)
+        save_settings_button.clicked.connect(self.save_configuration)
+        card.add_content(save_settings_button)
+        
         parent_layout.addWidget(card)
         
     def create_annotation_settings_card(self, parent_layout):
@@ -563,6 +596,48 @@ class MainWindow(QMainWindow):
         widget = QWidget()
         widget.setLayout(layout)
         return widget
+    
+    def set_folder_path(self, folder_path):
+        """Set folder path and update UI state properly"""
+        if not folder_path or not os.path.exists(folder_path):
+            return
+            
+        self.selected_folder = folder_path
+        
+        # Check if folder contains .tif files
+        try:
+            has_tiff_files = any(f.lower().endswith(('.tif', '.tiff')) for f in os.listdir(folder_path))
+            
+            if has_tiff_files:
+                self.folder_path_input.setText(f"Selected Folder: {folder_path}")
+                self.folder_path_input.setStyleSheet("""
+                    QLabel {
+                        border: 2px solid #2196F3;
+                        border-radius: 8px;
+                        padding: 12px;
+                        background-color: #e3f2fd;
+                        color: #1976D2;
+                        min-height: 20px;
+                    }
+                """)
+                self.save_annotated_checkbox.setEnabled(True)
+            else:
+                self.folder_path_input.setText("The folder does not contain any .tif files.")
+                self.folder_path_input.setStyleSheet("""
+                    QLabel {
+                        border: 2px dashed #cccccc;
+                        border-radius: 8px;
+                        padding: 12px;
+                        background-color: #fafafa;
+                        color: #666666;
+                        min-height: 20px;
+                    }
+                """)
+                self.save_annotated_checkbox.setEnabled(False)
+                self.selected_folder = None  # Reset if no valid files
+        except Exception as e:
+            print(f"Error checking folder contents: {e}")
+            self.selected_folder = None
 
     def create_progress_section(self):
         self.progress_dialog = QWidget(self)
@@ -612,39 +687,19 @@ class MainWindow(QMainWindow):
         self.annotated_group.hide()
     
     def select_folder(self):
-        folder_path = QFileDialog.getExistingDirectory(self, "Select Folder")
+        # Start from last used folder if available
+        start_dir = self.selected_folder if self.selected_folder and os.path.exists(self.selected_folder) else ""
+        folder_path = QFileDialog.getExistingDirectory(self, "Select Folder", start_dir)
+        
         if folder_path:
-            self.selected_folder = folder_path
+            # Use the centralized method to set and validate folder
+            self.set_folder_path(folder_path)
             
-            # Check if folder contains .tif files
-            has_tiff_files = any(f.lower().endswith(('.tif', '.tiff')) for f in os.listdir(folder_path))
-            
-            if has_tiff_files:
-                self.folder_path_input.setText(f"Selected Folder: {folder_path}")
-                self.folder_path_input.setStyleSheet("""
-                    QLabel {
-                        border: 2px solid #2196F3;
-                        border-radius: 8px;
-                        padding: 12px;
-                        background-color: #e3f2fd;
-                        color: #1976D2;
-                        min-height: 20px;
-                    }
-                """)
-                self.save_annotated_checkbox.setEnabled(True)
-            else:
-                self.folder_path_input.setText("The folder does not contain any .tif files.")
-                self.folder_path_input.setStyleSheet("""
-                    QLabel {
-                        border: 2px dashed #cccccc;
-                        border-radius: 8px;
-                        padding: 12px;
-                        background-color: #fafafa;
-                        color: #666666;
-                        min-height: 20px;
-                    }
-                """)
-                self.save_annotated_checkbox.setEnabled(False)
+            # Auto-save the folder path if it's valid
+            if self.selected_folder:  # Only save if validation passed
+                current_config = self.get_current_config()
+                current_config["last_folder_path"] = folder_path
+                save_config(current_config)
     
     def start_conversion(self):
         if not self.selected_folder:
@@ -796,5 +851,6 @@ class MainWindow(QMainWindow):
             "show_conf": "true" if self.show_conf_checkbox.isChecked() else "false",
             "status_blok": "Full Blok" if self.status_full_radio.isChecked() else "Setengah Blok",
             "save_annotated": "true" if self.save_annotated_checkbox.isChecked() else "false",
-            "annotated_folder": os.path.join(self.selected_folder, "annotated") if self.selected_folder and self.save_annotated_checkbox.isChecked() else None
+            "annotated_folder": os.path.join(self.selected_folder, "annotated") if self.selected_folder and self.save_annotated_checkbox.isChecked() else None,
+            "last_folder_path": self.selected_folder
         }
