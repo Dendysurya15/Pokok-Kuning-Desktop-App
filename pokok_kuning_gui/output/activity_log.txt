@@ -1,0 +1,2 @@
+[08:52:21] Application started successfully
+[08:52:21] Available models: yolov8n-pokok-kuning

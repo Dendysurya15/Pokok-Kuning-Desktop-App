@@ -16,7 +16,7 @@ if current_dir not in sys.path:
     sys.path.append(current_dir)
 
 # Import our modules
-from ui.main_window import MainWindow
+from ui.main_window_new import MainWindow
 from utils.config_manager import setup_database
 
 def main():
