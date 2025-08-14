@@ -563,7 +563,7 @@ class MainWindow(QMainWindow):
         
     def init_ui(self):
         # Set window properties
-        self.setWindowTitle("Pokok Kuning Detection System V 2.0.7")
+        self.setWindowTitle("Digital Architect — PT Sawit Sumbernan Sarana")
         self.setGeometry(100, 100, 1200, 800)
         self.setMinimumSize(1000, 700)
         
@@ -674,7 +674,7 @@ class MainWindow(QMainWindow):
             header_layout.addWidget(logo_label)
         
         # App title
-        title_label = QLabel("Pokok Kuning Detection System V 2.0.7")
+        title_label = QLabel("Pokok Kuning Detection System V 2.0.0")
         title_label.setStyleSheet("""
             QLabel {
                 color: white;
