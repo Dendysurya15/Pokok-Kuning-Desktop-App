@@ -131,6 +131,44 @@ class MainWindow(QMainWindow):
         else:
             # Running as script
             return os.path.join(os.path.dirname(os.path.dirname(__file__)), 'assets', 'img', filename)
+    
+    def get_model_class_names(self, model_name):
+        """Get class names from the PT model without loading the full model"""
+        try:
+            # Try to get model path
+            if os.path.isabs(model_name) or model_name.startswith("C:"):
+                model_path = model_name
+            else:
+                # Construct the path
+                script_dir = os.path.dirname(os.path.abspath(__file__))  # ui/
+                parent_dir = os.path.dirname(script_dir)                 # pokok_kuning_gui/
+                model_folder = os.path.join(parent_dir, "model")         # pokok_kuning_gui/model/
+                model_path = os.path.join(model_folder, f"{model_name}.pt")
+                
+                # Check if exists, if not try PyInstaller path
+                if not os.path.exists(model_path) and hasattr(sys, '_MEIPASS'):
+                    model_path = os.path.join(sys._MEIPASS, "model", f"{model_name}.pt")
+            
+            if not os.path.exists(model_path):
+                print(f"Model not found: {model_path}")
+                return ["Class 0", "Class 1"]  # Default fallback
+            
+            # Import YOLO and get class names
+            from ultralytics import YOLO
+            model = YOLO(model_path)
+            class_names = list(model.names.values()) if hasattr(model, 'names') and model.names else []
+            
+            # Clean up model to free memory
+            del model
+            
+            if class_names:
+                return class_names
+            else:
+                return ["Class 0", "Class 1"]  # Default fallback
+                
+        except Exception as e:
+            print(f"Error getting class names: {e}")
+            return ["Class 0", "Class 1"]  # Default fallback
         
     def init_ui(self):
         # Set window properties
@@ -146,9 +184,11 @@ class MainWindow(QMainWindow):
         # Set background image
         bg_path = self.get_asset_path('background.jpg')
         if os.path.exists(bg_path):
+            # Convert to forward slashes and escape properly for CSS
+            bg_path_css = bg_path.replace('\\', '/')
             self.setStyleSheet(f"""
                 QMainWindow {{
-                    background-image: url({bg_path});
+                    background-image: url("{bg_path_css}");
                     background-repeat: no-repeat;
                     background-position: center;
                     background-attachment: fixed;
@@ -161,6 +201,9 @@ class MainWindow(QMainWindow):
             self.setStyleSheet("""
                 QMainWindow {
                     background-color: #f5f5f5;
+                }
+                QWidget {
+                    background-color: rgba(245, 245, 245, 0.9);
                 }
             """)
         
@@ -243,6 +286,9 @@ class MainWindow(QMainWindow):
         
         # Initialize model path display
         self.update_model_path_display()
+        
+        # Initialize class selection combo box
+        self.update_class_selection_combo()
         
         # Add initial log message
         self.add_log_message("Application started successfully")
@@ -740,8 +786,59 @@ class MainWindow(QMainWindow):
         card.add_content(line_width_layout)
         
         # Display checkboxes with better spacing
-        display_layout = QHBoxLayout()
-        display_layout.setSpacing(20)  # Added spacing between checkboxes
+        display_layout = QVBoxLayout()
+        display_layout.setSpacing(16)  # Added spacing between elements
+        
+        # Class Selection Combo Box
+        class_selection_layout = self.create_labeled_widget("Class Selection", QComboBox())
+        self.class_selection_combo = class_selection_layout.findChild(QComboBox)
+        
+        # Get current model name
+        current_model = self.config.get("model", "yolov8n-pokok-kuning")
+        
+        # Get class names from model
+        class_names = self.get_model_class_names(current_model)
+        
+        # Add "All Classes" option and individual classes
+        self.class_selection_combo.addItem("All Classes")
+        for class_name in class_names:
+            self.class_selection_combo.addItem(class_name)
+        
+        # Set default selection from config or "All Classes"
+        default_class_selection = self.config.get("class_selection", "All Classes")
+        if default_class_selection in [self.class_selection_combo.itemText(i) for i in range(self.class_selection_combo.count())]:
+            self.class_selection_combo.setCurrentText(default_class_selection)
+        else:
+            self.class_selection_combo.setCurrentText("All Classes")
+        
+        self.class_selection_combo.setStyleSheet("""
+            QComboBox {
+                border: 2px solid #e0e0e0;
+                border-radius: 8px;
+                padding: 12px 16px;
+                background-color: white;
+                min-height: 25px;
+                font-size: 13px;
+                margin-top: 8px;
+            }
+            QComboBox::drop-down {
+                border: none;
+                width: 30px;
+            }
+            QComboBox::down-arrow {
+                image: none;
+                border-left: 5px solid transparent;
+                border-right: 5px solid transparent;
+                border-top: 5px solid #666;
+                margin-right: 10px;
+            }
+        """)
+        
+        card.add_content(class_selection_layout)
+        
+        # Checkboxes for display options
+        checkbox_layout = QHBoxLayout()
+        checkbox_layout.setSpacing(20)  # Added spacing between checkboxes
         
         self.show_labels_checkbox = QCheckBox("Show Labels")
         default_show_labels = self.config.get("show_labels") if self.config.get("show_labels") else "true"
@@ -769,9 +866,9 @@ class MainWindow(QMainWindow):
                     background-color: #2196F3;
                 }
             """)
-            display_layout.addWidget(checkbox)
+            checkbox_layout.addWidget(checkbox)
         
-        card.add_content(self.create_layout_widget(display_layout))
+        card.add_content(self.create_layout_widget(checkbox_layout))
         
         # Start Processing button with better spacing and sizing
         start_button = QPushButton(" Start Processing")
@@ -1085,6 +1182,38 @@ class MainWindow(QMainWindow):
         """Update the model path display when the model combo box changes."""
         print(f"🔍 [DEBUG] Model combo changed to: {text}")
         self.update_model_path_display()
+        self.update_class_selection_combo()
+    
+    def update_class_selection_combo(self):
+        """Update the class selection combo box with classes from the new model"""
+        try:
+            current_model = self.model_combo.currentText()
+            print(f"🔍 [DEBUG] Updating class selection for model: {current_model}")
+            
+            # Clear current items
+            self.class_selection_combo.clear()
+            
+            # Get class names from the new model
+            class_names = self.get_model_class_names(current_model)
+            
+            # Add "All Classes" option and individual classes
+            self.class_selection_combo.addItem("All Classes")
+            for class_name in class_names:
+                self.class_selection_combo.addItem(class_name)
+            
+            # Set to "All Classes" by default when model changes
+            self.class_selection_combo.setCurrentText("All Classes")
+            
+            print(f"🔍 [DEBUG] Updated class selection with {len(class_names)} classes: {class_names}")
+            
+        except Exception as e:
+            print(f"🔍 [DEBUG] Error updating class selection: {e}")
+            # Fallback to default classes
+            self.class_selection_combo.clear()
+            self.class_selection_combo.addItem("All Classes")
+            self.class_selection_combo.addItem("Class 0")
+            self.class_selection_combo.addItem("Class 1")
+            self.class_selection_combo.setCurrentText("All Classes")
     
     def update_model_path_display(self):
         """Update the model path display to show the currently selected model."""
@@ -1398,6 +1527,9 @@ class MainWindow(QMainWindow):
         self.show_labels_checkbox.setChecked(True)
         self.show_conf_checkbox.setChecked(False)
         
+        # Reset Class Selection
+        self.class_selection_combo.setCurrentText("All Classes")
+        
         # Reset Save Annotated File
         self.save_annotated_checkbox.setChecked(True)
         self.save_annotated_checkbox.setEnabled(False)
@@ -1432,6 +1564,7 @@ class MainWindow(QMainWindow):
             "line_width": "3",
             "show_labels": "true",
             "show_conf": "false",
+            "class_selection": "All Classes",
             "status_blok": "Full Blok",
             "save_annotated": "true",
             "last_folder_path": None
@@ -1450,6 +1583,7 @@ class MainWindow(QMainWindow):
             "line_width": str(self.line_width_input.value()),
             "show_labels": "true" if self.show_labels_checkbox.isChecked() else "false",
             "show_conf": "true" if self.show_conf_checkbox.isChecked() else "false",
+            "class_selection": self.class_selection_combo.currentText(),
             "status_blok": "Full Blok" if self.status_full_radio.isChecked() else "Setengah Blok",
             "save_annotated": "true" if self.save_annotated_checkbox.isChecked() else "false",
             "annotated_folder": os.path.join(self.selected_folder, "annotated") if self.selected_folder and self.save_annotated_checkbox.isChecked() else None,
