@@ -2,11 +2,11 @@ from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, 
     QFileDialog, QCheckBox, QProgressBar, QComboBox, QSlider, QGroupBox, 
     QRadioButton, QSpinBox, QMessageBox, QTextEdit, QDoubleSpinBox,
-    QFrame, QSizePolicy, QScrollArea
+    QFrame, QSizePolicy, QScrollArea, QTableWidget, QTableWidgetItem,
+    QHeaderView, QLineEdit, QSplitter
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, pyqtSlot, QTimer, QSize
 from PyQt5.QtGui import QFont, QPixmap, QPalette, QColor, QLinearGradient, QPainter, QIcon
-from PyQt5.QtSvg import QSvgWidget
 
 import os
 import sys
@@ -16,64 +16,455 @@ import json
 from utils.config_manager import load_config, save_config, get_model_names
 from core.processor import ImageProcessor
 
-class ModernCard(QFrame):
-    """Custom modern card widget with rounded corners and shadow effect"""
-    def __init__(self, title="", icon_text=""):
+class StatusPanel(QFrame):
+    """Status panel widget showing connection and system status"""
+    def __init__(self):
         super().__init__()
-        self.title = title
-        self.icon_text = icon_text
         self.setup_ui()
         
     def setup_ui(self):
         self.setFrameStyle(QFrame.Box)
-        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
         self.setStyleSheet("""
             QFrame {
                 background-color: white;
-                border: 1px solid #e0e0e0;
-                border-radius: 12px;
-                padding: 16px;
+                border: 1px solid #d1d9e6;
+                border-radius: 6px;
+                padding: 12px;
             }
         """)
         
-        # Create title bar with icon
-        title_layout = QHBoxLayout()
-        title_layout.setSpacing(12)  # Added spacing between icon and title
-        if self.icon_text:
-            icon_label = QLabel(self.icon_text)
-            icon_label.setStyleSheet("""
-                QLabel {
-                    font-size: 20px;
-                    color: #2196F3;
-                    margin-right: 10px;
-                }
-            """)
-            title_layout.addWidget(icon_label)
+        layout = QVBoxLayout(self)
+        layout.setSpacing(8)
+        layout.setContentsMargins(10, 10, 10, 10)
         
-        title_label = QLabel(self.title)
-        title_label.setStyleSheet("""
-            QLabel {
-                font-size: 18px;
-                font-weight: bold;
-                color: #333333;
-                margin-left: 5px;
+        # Status grid
+        status_layout = QHBoxLayout()
+        status_layout.setSpacing(15)
+        
+        # Left side - Status info
+        left_panel = QVBoxLayout()
+        left_panel.setSpacing(4)
+        
+        self.db_status = QLabel("Status Database : Connected")
+        self.db_status.setStyleSheet("color: #28a745; font-weight: 500; font-size: 11px;")
+        
+        self.machine_status = QLabel("Status System : Ready")
+        self.machine_status.setStyleSheet("color: #495057; font-size: 11px;")
+        
+        self.selected_folder = QLabel("Select Folder : ")
+        self.selected_folder.setStyleSheet("color: #495057; font-size: 11px;")
+        
+        left_panel.addWidget(self.db_status)
+        left_panel.addWidget(self.machine_status)
+        left_panel.addWidget(self.selected_folder)
+        status_layout.addLayout(left_panel)
+        
+        # Middle - Additional info
+        middle_panel = QVBoxLayout()
+        middle_panel.setSpacing(4)
+        
+        self.log_count = QLabel("Total Files : 0")
+        self.log_count.setStyleSheet("color: #495057; font-size: 11px;")
+        
+        self.process_status = QLabel("Process Status : Standby")
+        self.process_status.setStyleSheet("color: #495057; font-size: 11px;")
+        
+        self.model_info = QLabel("AI Model : yolov8n-pokok-kuning")
+        self.model_info.setStyleSheet("color: #495057; font-size: 11px;")
+        
+        middle_panel.addWidget(self.log_count)
+        middle_panel.addWidget(self.process_status)
+        middle_panel.addWidget(self.model_info)
+        status_layout.addLayout(middle_panel)
+        
+        # Right side - Refresh button
+        right_panel = QVBoxLayout()
+        right_panel.setSpacing(4)
+        
+        self.refresh_btn = QPushButton("Refresh")
+        self.refresh_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #007bff;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 6px 12px;
+                font-weight: 500;
+                font-size: 11px;
+                min-width: 60px;
+                min-height: 26px;
+            }
+            QPushButton:hover {
+                background-color: #0056b3;
             }
         """)
-        title_layout.addWidget(title_label)
-        title_layout.addStretch()
+        self.refresh_btn.clicked.connect(self.refresh_status)
         
-        # Create main content layout
-        self.content_layout = QVBoxLayout()
-        self.content_layout.setSpacing(16)  # Increased spacing between content elements
-        self.content_layout.setContentsMargins(8, 8, 8, 8)
-        self.content_layout.addLayout(title_layout)
-        self.content_layout.addSpacing(20)  # Added more space after title
+        right_panel.addWidget(self.refresh_btn)
+        right_panel.addStretch()
+        status_layout.addLayout(right_panel)
         
-        self.setLayout(self.content_layout)
+        layout.addLayout(status_layout)
     
-    def add_content(self, widget):
-        """Add content widget to the card"""
-        self.content_layout.addWidget(widget)
+    def refresh_status(self):
+        """Refresh the status display"""
+        # This method will be called when refresh button is clicked
+        # The parent window can override this if needed
+        pass
+
+class ConfigurationTable(QTableWidget):
+    """Table widget for displaying configuration settings"""
+    def __init__(self):
+        super().__init__()
+        self.setup_ui()
+        
+    def setup_ui(self):
+        # Set table properties
+        self.setColumnCount(4)
+        self.setHorizontalHeaderLabels(["Parameter", "Value", "Type", "Description"])
+        
+        # Style the table
+        self.setStyleSheet("""
+            QTableWidget {
+                background-color: white;
+                border: 1px solid #d1d9e6;
+                border-radius: 6px;
+                gridline-color: #e9ecef;
+                selection-background-color: #e3f2fd;
+                font-size: 11px;
+            }
+            QTableWidget::item {
+                padding: 6px 8px;
+                border-bottom: 1px solid #e9ecef;
+            }
+            QHeaderView::section {
+                background-color: #f8f9fa;
+                padding: 8px 6px;
+                border: none;
+                border-bottom: 1px solid #d1d9e6;
+                font-weight: 600;
+                color: #495057;
+                font-size: 11px;
+            }
+        """)
+        
+        # Set column widths
+        header = self.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeToContents)  # Parameter
+        header.setSectionResizeMode(1, QHeaderView.ResizeToContents)  # Value
+        header.setSectionResizeMode(2, QHeaderView.ResizeToContents)  # Type
+        header.setSectionResizeMode(3, QHeaderView.Stretch)           # Description
+        
+        # Add sample data
+        self.populate_sample_data()
+        
+    def populate_sample_data(self):
+        config_data = [
+            ["Image Size", "12800", "Integer", "Image size for processing"],
+            ["Confidence", "0.2", "Float", "Confidence threshold"],
+            ["IOU Threshold", "0.2", "Float", "Intersection over Union threshold"],
+            ["Max Detection", "10000", "Integer", "Maximum detections per image"],
+            ["Line Width", "3", "Integer", "Annotation line width"],
+            ["Convert KML", "false", "Boolean", "Export to KML format"],
+            ["Convert SHP", "true", "Boolean", "Export to Shapefile format"],
+            ["Show Labels", "true", "Boolean", "Display class labels"],
+            ["Show Confidence", "false", "Boolean", "Display confidence scores"]
+        ]
+        
+        self.setRowCount(len(config_data))
+        
+        for row, data in enumerate(config_data):
+            for col, value in enumerate(data):
+                item = QTableWidgetItem(str(value))
+                if col == 0:  # Parameter column - bold
+                    font = item.font()
+                    font.setBold(True)
+                    item.setFont(font)
+                self.setItem(row, col, item)
+
+class FileManagementPanel(QFrame):
+    """Panel for file management operations"""
+    def __init__(self, parent=None):
+        super().__init__()
+        self.parent = parent
+        self.setup_ui()
+        
+    def setup_ui(self):
+        self.setFrameStyle(QFrame.Box)
+        self.setStyleSheet("""
+            QFrame {
+                background-color: white;
+                border: 1px solid #d1d9e6;
+                border-radius: 6px;
+                padding: 12px;
+            }
+        """)
+        
+        layout = QVBoxLayout(self)
+        layout.setSpacing(10)
+        layout.setContentsMargins(10, 10, 10, 10)
+        
+        # Title
+        title = QLabel("File Management")
+        title.setStyleSheet("""
+            QLabel {
+                font-size: 13px;
+                font-weight: 600;
+                color: #495057;
+                margin-bottom: 8px;
+                padding-bottom: 4px;
+                border-bottom: 1px solid #e9ecef;
+            }
+        """)
+        layout.addWidget(title)
+        
+        # Folder selection
+        folder_layout = QHBoxLayout()
+        folder_layout.setSpacing(8)
+        
+        self.folder_input = QLineEdit()
+        self.folder_input.setPlaceholderText("Select folder containing images...")
+        self.folder_input.setReadOnly(True)
+        self.folder_input.setStyleSheet("""
+            QLineEdit {
+                border: 1px solid #ced4da;
+                border-radius: 4px;
+                padding: 6px 10px;
+                font-size: 11px;
+                background-color: #f8f9fa;
+                color: #495057;
+            }
+        """)
+        
+        browse_btn = QPushButton("Browse")
+        browse_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #007bff;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 6px 16px;
+                font-weight: 500;
+                font-size: 11px;
+                min-width: 60px;
+            }
+            QPushButton:hover {
+                background-color: #0056b3;
+            }
+        """)
+        browse_btn.clicked.connect(self.browse_folder)
+        
+        folder_layout.addWidget(self.folder_input, 1)
+        folder_layout.addWidget(browse_btn)
+        layout.addLayout(folder_layout)
+        
+        # Model selection
+        model_layout = QHBoxLayout()
+        model_layout.setSpacing(8)
+        
+        model_label = QLabel("AI Model:")
+        model_label.setStyleSheet("font-size: 11px; color: #495057; min-width: 60px;")
+        
+        self.model_input = QLineEdit()
+        self.model_input.setPlaceholderText("Select AI model file (.pt)...")
+        self.model_input.setReadOnly(True)
+        self.model_input.setStyleSheet("""
+            QLineEdit {
+                border: 1px solid #ced4da;
+                border-radius: 4px;
+                padding: 6px 10px;
+                font-size: 11px;
+                background-color: #f8f9fa;
+                color: #495057;
+            }
+        """)
+        
+        browse_model_btn = QPushButton("Browse")
+        browse_model_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #007bff;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 6px 16px;
+                font-weight: 500;
+                font-size: 11px;
+                min-width: 60px;
+            }
+            QPushButton:hover {
+                background-color: #0056b3;
+            }
+        """)
+        browse_model_btn.clicked.connect(self.browse_model)
+        
+        model_layout.addWidget(model_label)
+        model_layout.addWidget(self.model_input, 1)
+        model_layout.addWidget(browse_model_btn)
+        layout.addLayout(model_layout)
+        
+        # File options
+        options_layout = QHBoxLayout()
+        options_layout.setSpacing(15)
+        
+        self.save_annotated = QCheckBox("Save Annotated Images")
+        self.save_annotated.setChecked(True)
+        self.save_annotated.setStyleSheet("""
+            QCheckBox {
+                font-size: 11px;
+                color: #495057;
+                spacing: 6px;
+            }
+            QCheckBox::indicator {
+                width: 16px;
+                height: 16px;
+                border: 1px solid #ced4da;
+                border-radius: 3px;
+                background-color: white;
+            }
+            QCheckBox::indicator:checked {
+                background-color: #007bff;
+                border-color: #007bff;
+            }
+        """)
+        
+        self.export_kml = QCheckBox("Export KML")
+        self.export_kml.setStyleSheet(self.save_annotated.styleSheet())
+        
+        self.export_shp = QCheckBox("Export Shapefile")
+        self.export_shp.setChecked(True)
+        self.export_shp.setStyleSheet(self.save_annotated.styleSheet())
+        
+        options_layout.addWidget(self.save_annotated)
+        options_layout.addWidget(self.export_kml)
+        options_layout.addWidget(self.export_shp)
+        options_layout.addStretch()
+        layout.addLayout(options_layout)
+        
+        # Action buttons
+        action_layout = QHBoxLayout()
+        action_layout.setSpacing(8)
+        
+        start_btn = QPushButton("Start Processing")
+        start_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #28a745;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 8px 20px;
+                font-weight: 600;
+                font-size: 12px;
+                min-width: 100px;
+                min-height: 32px;
+            }
+            QPushButton:hover {
+                background-color: #218838;
+            }
+        """)
+        start_btn.clicked.connect(self.start_processing)
+        
+        settings_btn = QPushButton("Settings")
+        settings_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #6c757d;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 8px 20px;
+                font-weight: 500;
+                font-size: 11px;
+                min-width: 80px;
+                min-height: 32px;
+            }
+            QPushButton:hover {
+                background-color: #545b62;
+            }
+        """)
+        settings_btn.clicked.connect(self.open_settings)
+        
+        reset_btn = QPushButton("Reset")
+        reset_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #dc3545;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 8px 20px;
+                font-weight: 500;
+                font-size: 11px;
+                min-width: 60px;
+                min-height: 32px;
+            }
+            QPushButton:hover {
+                background-color: #c82333;
+            }
+        """)
+        reset_btn.clicked.connect(self.reset_settings)
+        
+        action_layout.addWidget(start_btn)
+        action_layout.addWidget(settings_btn)
+        action_layout.addWidget(reset_btn)
+        action_layout.addStretch()
+        layout.addLayout(action_layout)
+    
+    def browse_folder(self):
+        """Open folder browser dialog"""
+        if self.parent:
+            self.parent.select_folder()
+    
+    def browse_model(self):
+        """Open model browser dialog"""
+        if self.parent:
+            self.parent.select_model()
+    
+    def start_processing(self):
+        """Start the image processing"""
+        if self.parent:
+            self.parent.start_conversion()
+    
+    def open_settings(self):
+        """Open settings dialog"""
+        if self.parent:
+            self.parent.save_settings()
+    
+    def reset_settings(self):
+        """Reset settings to default"""
+        if self.parent:
+            try:
+                reply = QMessageBox.question(
+                    self.parent, 
+                    "Reset Settings", 
+                    "Are you sure you want to reset all settings to default values?",
+                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.No
+                )
+                
+                if reply == QMessageBox.Yes:
+                    # Reset file options
+                    if hasattr(self.parent, 'file_panel'):
+                        self.parent.file_panel.save_annotated.setChecked(True)
+                        self.parent.file_panel.export_kml.setChecked(False)
+                        self.parent.file_panel.export_shp.setChecked(True)
+                    
+                    # Reset model to default
+                    default_model = "yolov8n-pokok-kuning"
+                    self.parent.selected_model = default_model
+                    if hasattr(self.parent, 'file_panel'):
+                        self.parent.file_panel.model_input.setText(default_model)
+                    self.parent.status_panel.model_info.setText(f"AI Model : {default_model}")
+                    
+                    # Update configuration table if available
+                    if hasattr(self.parent, 'config_table'):
+                        self.parent.config_table.populate_sample_data()
+                    
+                    # Synchronize UI with reset values
+                    self.parent.sync_config_with_ui()
+                    
+                    QMessageBox.information(self.parent, "Success", "Settings reset to default values!")
+                    self.parent.add_log_message("Settings reset to default values")
+            except Exception as e:
+                QMessageBox.critical(self.parent, "Error", f"Failed to reset settings: {str(e)}")
+                self.parent.add_log_message(f"❌ Failed to reset settings: {str(e)}")
 
 class ProcessingThread(QThread):
     """Thread for running the image processing in the background"""
@@ -172,103 +563,61 @@ class MainWindow(QMainWindow):
         
     def init_ui(self):
         # Set window properties
-        self.setWindowTitle("Pokok Kuning Desktop App")
-        self.setGeometry(100, 100, 1000, 800)
-        self.setMinimumSize(800, 600)  # Set minimum window size
+        self.setWindowTitle("Pokok Kuning Detection System V 2.0.7")
+        self.setGeometry(100, 100, 1200, 800)
+        self.setMinimumSize(1000, 700)
         
         # Set window icon
         icon_path = self.get_asset_path('logo.png')
         if os.path.exists(icon_path):
             self.setWindowIcon(QIcon(icon_path))
         
-        # Set background image
-        bg_path = self.get_asset_path('background.jpg')
-        if os.path.exists(bg_path):
-            # Convert to forward slashes and escape properly for CSS
-            bg_path_css = bg_path.replace('\\', '/')
-            self.setStyleSheet(f"""
-                QMainWindow {{
-                    background-image: url("{bg_path_css}");
-                    background-repeat: no-repeat;
-                    background-position: center;
-                    background-attachment: fixed;
-                }}
-                QWidget {{
-                    background-color: rgba(245, 245, 245, 0.9);
-                }}
-            """)
-        else:
-            self.setStyleSheet("""
-                QMainWindow {
-                    background-color: #f5f5f5;
-                }
-                QWidget {
-                    background-color: rgba(245, 245, 245, 0.9);
-                }
-            """)
+        # Set modern styling similar to HRIS
+        self.setStyleSheet("""
+            QMainWindow {
+                background-color: #f8f9fa;
+                font-family: 'Segoe UI', 'Tahoma', sans-serif;
+            }
+            QWidget {
+                font-size: 11px;
+                color: #495057;
+            }
+            QLabel {
+                font-size: 11px;
+                color: #495057;
+            }
+        """)
         
         # Create central widget and layout
-        central_scroll = QScrollArea()
-        central_scroll.setWidgetResizable(True)
-        central_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-
         central_widget = QWidget()
         main_layout = QVBoxLayout(central_widget)
-        main_layout.setContentsMargins(20, 20, 20, 20)
-        main_layout.setSpacing(20)
-
-        central_scroll.setWidget(central_widget)
-        self.setCentralWidget(central_scroll)
+        main_layout.setContentsMargins(15, 15, 15, 15)
+        main_layout.setSpacing(12)
+        
+        self.setCentralWidget(central_widget)
         
         # Load configuration
         self.config = load_config()
         
-        # Initialize selected folder
+        # Initialize selected folder and model
         self.selected_folder = None
-        
-        # Load last used folder if available (will be set after UI creation)
-        self.last_folder_from_config = self.config.get("last_folder_path") if self.config.get("last_folder_path") and os.path.exists(self.config.get("last_folder_path")) else None
+        self.selected_model = None
         
         # Create header
         self.create_header(main_layout)
         
-        # Create main content area with cards - Responsive layout
-        content_layout = QHBoxLayout()
-        content_layout.setSpacing(20)
-        content_layout.setContentsMargins(0, 0, 0, 0)
-
-        # Left column
-        left_column = QVBoxLayout()
-        left_column.setSpacing(20)
-
-        # Folder Selection Card
-        self.create_folder_selection_card(left_column)
-
-        # Annotation Settings Card
-        self.create_annotation_settings_card(left_column)
-
-        left_container = QWidget()
-        left_container.setLayout(left_column)
-        left_container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
-
-        # Right column
-        right_column = QVBoxLayout()
-        right_column.setSpacing(20)
-
-        # AI Model Configuration Card
-        self.create_ai_model_config_card(right_column)
-
-        right_container = QWidget()
-        right_container.setLayout(right_column)
-        right_container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
-
-        content_layout.addWidget(left_container, 1)
-        content_layout.addWidget(right_container, 1)
-        content_layout.setStretch(0, 1)
-        content_layout.setStretch(1, 1)
-        content_layout.setAlignment(Qt.AlignTop)
-
-        main_layout.addLayout(content_layout)
+        # Create status panel
+        self.status_panel = StatusPanel()
+        # Connect refresh button to refresh function
+        self.status_panel.refresh_btn.clicked.connect(self.refresh_status)
+        main_layout.addWidget(self.status_panel)
+        
+        # Create configuration table section
+        self.create_config_section(main_layout)
+        
+        # Create file management section
+        self.file_panel = FileManagementPanel(self)
+        main_layout.addWidget(self.file_panel)
         
         # Create progress dialog (hidden initially)
         self.create_progress_section()
@@ -280,77 +629,78 @@ class MainWindow(QMainWindow):
         self.total_abnormal = 0
         self.total_normal = 0
         
-        # Load last used folder after UI is fully created
-        if self.last_folder_from_config:
-            self.set_folder_path(self.last_folder_from_config)
+        # Set initial model path
+        self.set_initial_model_path()
         
-        # Initialize model path display
-        self.update_model_path_display()
-        
-        # Initialize class selection combo box
-        self.update_class_selection_combo()
+        # Synchronize configuration with UI
+        self.sync_config_with_ui()
         
         # Add initial log message
         self.add_log_message("Application started successfully")
         self.add_log_message(f"Available models: {', '.join(get_model_names())}")
-        
+    
+    def set_initial_model_path(self):
+        """Set initial model path from config or default"""
+        default_model = self.config.get("model", "yolov8n-pokok-kuning")
+        if self.file_panel:
+            self.file_panel.model_input.setText(default_model)
+            self.selected_model = default_model
+
     def create_header(self, parent_layout):
         """Create modern header with gradient background and logo"""
         header_widget = QWidget()
         header_widget.setStyleSheet("""
             QWidget {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0, 
-                    stop:0 #2196F3, stop:1 #1976D2);
-                border-radius: 12px;
-                padding: 20px;
+                    stop:0 #007bff, stop:1 #0056b3);
+                border-radius: 6px;
+                padding: 15px;
             }
         """)
-        header_widget.setFixedHeight(120)  # Increased height for better spacing
+        header_widget.setFixedHeight(80)
         
         header_layout = QHBoxLayout(header_widget)
-        header_layout.setContentsMargins(20, 20, 20, 20)
-        header_layout.setSpacing(20)  # Added spacing between elements
+        header_layout.setContentsMargins(15, 15, 15, 15)
+        header_layout.setSpacing(15)
         
         # Logo
         logo_path = self.get_asset_path('logo.png')
         if os.path.exists(logo_path):
             logo_label = QLabel()
             pixmap = QPixmap(logo_path)
-            # Scale logo to fit header height with proper margins
-            scaled_pixmap = pixmap.scaledToHeight(70, Qt.SmoothTransformation)
+            scaled_pixmap = pixmap.scaledToHeight(50, Qt.SmoothTransformation)
             logo_label.setPixmap(scaled_pixmap)
-            logo_label.setFixedWidth(80)  # Fixed width to prevent overlap
+            logo_label.setFixedWidth(60)
             header_layout.addWidget(logo_label)
         
-        # App title with better spacing
-        title_label = QLabel("Digital Architect — PT Sawit Sumbernan Sarana")
+        # App title
+        title_label = QLabel("Pokok Kuning Detection System V 2.0.7")
         title_label.setStyleSheet("""
             QLabel {
                 color: white;
-                font-size: 26px;
-                font-weight: bold;
+                font-size: 18px;
+                font-weight: 600;
                 background-color: transparent;
                 margin-left: 10px;
-                margin-right: 10px;
             }
         """)
-        title_label.setMinimumWidth(300)  # Ensure minimum width for title
+        title_label.setMinimumWidth(300)
         header_layout.addWidget(title_label)
         header_layout.addStretch()
         
-        # Show Log button with better positioning
+        # Show Log button
         show_log_button = QPushButton("Show Progress")
         show_log_button.setStyleSheet("""
             QPushButton {
                 background-color: rgba(255, 255, 255, 0.2);
                 color: white;
-                border: 2px solid rgba(255, 255, 255, 0.3);
-                border-radius: 8px;
-                padding: 10px 20px;
-                font-weight: bold;
-                font-size: 14px;
-                min-width: 120px;
-                min-height: 40px;
+                border: 1px solid rgba(255, 255, 255, 0.3);
+                border-radius: 4px;
+                padding: 8px 16px;
+                font-weight: 500;
+                font-size: 11px;
+                min-width: 100px;
+                min-height: 32px;
             }
             QPushButton:hover {
                 background-color: rgba(255, 255, 255, 0.3);
@@ -365,703 +715,162 @@ class MainWindow(QMainWindow):
         
         parent_layout.addWidget(header_widget)
         
-    def create_folder_selection_card(self, parent_layout):
-        """Create modern folder selection card"""
-        card = ModernCard("Folder Selection", "")
-        
-        # Folder input area with better spacing
-        folder_input_layout = QHBoxLayout()
-        folder_input_layout.setSpacing(15)  # Added spacing between elements
-        
-        # Initial folder display (will be updated later if there's a saved folder)
-        self.folder_path_input = QLabel("No folder selected")
-        self.folder_path_input.setStyleSheet("""
-            QLabel {
-                border: 2px dashed #cccccc;
-                border-radius: 8px;
-                padding: 15px;
-                background-color: #fafafa;
-                color: #666666;
-                min-height: 25px;
+    def create_config_section(self, parent_layout):
+        """Create configuration section with table"""
+        # Create group box for configuration
+        config_group = QGroupBox("Configuration Settings")
+        config_group.setStyleSheet("""
+            QGroupBox {
                 font-size: 13px;
-                margin-right: 10px;
+                font-weight: 600;
+                color: #495057;
+                border: 1px solid #d1d9e6;
+                border-radius: 6px;
+                margin-top: 12px;
+                padding-top: 12px;
             }
-        """)
-        self.folder_path_input.setWordWrap(True)  # Enable word wrapping for long paths
-        folder_input_layout.addWidget(self.folder_path_input, 1)  # Give it more space
-        
-        browse_button = QPushButton("Browse")
-        
-        # Add folder icon to browse button
-        folder_icon_path = self.get_asset_path('folder_icon.svg')
-        if os.path.exists(folder_icon_path):
-            browse_button.setIcon(QIcon(folder_icon_path))
-            browse_button.setIconSize(QSize(18, 18))  # Slightly larger icon
-        
-        browse_button.setStyleSheet("""
-            QPushButton {
-                background-color: #2196F3;
-                color: white;
-                border: none;
-                border-radius: 8px;
-                padding: 15px 25px;
-                font-weight: bold;
-                font-size: 13px;
-                min-width: 100px;
-                min-height: 25px;
-            }
-            QPushButton:hover {
-                background-color: #1976D2;
-            }
-            QPushButton:pressed {
-                background-color: #0D47A1;
-            }
-        """)
-        browse_button.clicked.connect(self.select_folder)
-        folder_input_layout.addWidget(browse_button)
-        
-        card.add_content(self.create_layout_widget(folder_input_layout))
-        
-        # Save annotated file checkbox with better spacing
-        self.save_annotated_checkbox = QCheckBox("Save Annotated File")
-        self.save_annotated_checkbox.setStyleSheet("""
-            QCheckBox {
-                font-size: 14px;
-                color: #333333;
-                spacing: 10px;
-                margin-top: 15px;
-                margin-bottom: 15px;
-            }
-            QCheckBox::indicator {
-                width: 20px;
-                height: 20px;
-                border: 2px solid #2196F3;
-                border-radius: 4px;
-            }
-            QCheckBox::indicator:checked {
-                background-color: #2196F3;
-                image: url(data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTIiIGhlaWdodD0iOSIgdmlld0JveD0iMCAwIDEyIDkiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxwYXRoIGQ9Ik0xIDQuNUw0LjUgOEwxMSAxIiBzdHJva2U9IndoaXRlIiBzdHJva2Utd2lkdGg9IjIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPgo8L3N2Zz4K);
-            }
-        """)
-        default_save_annotated = self.config.get("save_annotated") if self.config.get("save_annotated") else "true"
-        self.save_annotated_checkbox.setChecked(default_save_annotated == "true")
-        card.add_content(self.save_annotated_checkbox)
-        
-        # Results area with better visibility
-        results_label = QLabel("Results will appear here after conversion")
-        results_label.setStyleSheet("""
-            QLabel {
-                border: 2px dashed #cccccc;
-                border-radius: 8px;
-                padding: 25px;
-                background-color: #fafafa;
-                color: #999999;
-                text-align: center;
-                min-height: 80px;
-                font-size: 13px;
-                margin-top: 10px;
-            }
-        """)
-        results_label.setAlignment(Qt.AlignCenter)
-        results_label.setWordWrap(True)  # Enable word wrapping
-        card.add_content(results_label)
-        
-        parent_layout.addWidget(card)
-        
-    def create_ai_model_config_card(self, parent_layout):
-        """Create modern AI model configuration card"""
-        card = ModernCard("AI Model Configuration", "")
-        
-        # Model AI input area (similar to folder selection) with better spacing
-        model_input_layout = QHBoxLayout()
-        model_input_layout.setSpacing(15)  # Added spacing between elements
-        
-        # Model path display with better visibility
-        self.model_path_input = QLabel("yolov8n-pokok-kuning.pt")
-        self.model_path_input.setStyleSheet("""
-            QLabel {
-                border: 2px dashed #cccccc;
-                border-radius: 8px;
-                padding: 15px;
-                background-color: #fafafa;
-                color: #666666;
-                min-height: 25px;
-                font-size: 13px;
-                margin-right: 10px;
-            }
-        """)
-        self.model_path_input.setWordWrap(True)  # Enable word wrapping for long paths
-        model_input_layout.addWidget(self.model_path_input, 1)  # Give it more space
-        
-        # Browse button for model with better sizing
-        browse_model_button = QPushButton("Browse")
-        browse_model_button.setStyleSheet("""
-            QPushButton {
-                background-color: #2196F3;
-                color: white;
-                border: none;
-                border-radius: 8px;
-                padding: 15px 25px;
-                font-weight: bold;
-                font-size: 13px;
-                min-width: 100px;
-                min-height: 25px;
-            }
-            QPushButton:hover {
-                background-color: #1976D2;
-            }
-            QPushButton:pressed {
-                background-color: #0D47A1;
-            }
-        """)
-        browse_model_button.clicked.connect(self.select_model)
-        model_input_layout.addWidget(browse_model_button)
-        
-        card.add_content(self.create_layout_widget(model_input_layout))
-        
-        # Model AI dropdown (kept for backward compatibility) with better spacing
-        model_layout = self.create_labeled_widget("Model AI", QComboBox())
-        self.model_combo = model_layout.findChild(QComboBox)
-        model_names = get_model_names()
-        self.model_combo.addItems(model_names)
-        default_model = self.config.get("model") if self.config.get("model") else "yolov8n-pokok-kuning"
-        if default_model in model_names:
-            self.model_combo.setCurrentText(default_model)
-        self.model_combo.setStyleSheet("""
-            QComboBox {
-                border: 2px solid #e0e0e0;
-                border-radius: 8px;
-                padding: 12px 16px;
-                background-color: white;
-                min-height: 25px;
-                font-size: 13px;
-                margin-top: 8px;
-            }
-            QComboBox::drop-down {
-                border: none;
-                width: 25px;
-            }
-            QComboBox::down-arrow {
-                image: url(data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTIiIGhlaWdodD0iOCIgdmlld0JveD0iMCAwIDEyIDgiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxwYXRoIGQ9Ik0xIDFMNiA2TDExIDEiIHN0cm9rZT0iIzMzMyIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiLz4KPC9zdmc+);
-            }
-        """)
-        # Connect model combo change to update model path display
-        self.model_combo.currentTextChanged.connect(self.on_model_combo_changed)
-        card.add_content(model_layout)
-        
-        # Status Blok radio buttons with better spacing
-        status_label = QLabel("Status Blok")
-        status_label.setStyleSheet("""
-            font-weight: bold; 
-            color: #333333; 
-            margin-top: 20px; 
-            margin-bottom: 10px;
-            font-size: 14px;
-        """)
-        card.add_content(status_label)
-        
-        status_layout = QHBoxLayout()
-        status_layout.setSpacing(20)  # Added spacing between radio buttons
-        self.status_full_radio = QRadioButton("Full Blok")
-        self.status_half_radio = QRadioButton("Setengah Blok")
-        
-        default_status = self.config.get("status_blok") if self.config.get("status_blok") else "Full Blok"
-        if default_status == "Full Blok":
-            self.status_full_radio.setChecked(True)
-        else:
-            self.status_half_radio.setChecked(True)
-            
-        for radio in [self.status_full_radio, self.status_half_radio]:
-            radio.setStyleSheet("""
-                QRadioButton {
-                    font-size: 14px;
-                    color: #333333;
-                    spacing: 12px;
-                    margin: 5px 0px;
-                }
-                QRadioButton::indicator {
-                    width: 20px;
-                    height: 20px;
-                    border: 2px solid #2196F3;
-                    border-radius: 10px;
-                }
-                QRadioButton::indicator:checked {
-                    background-color: #2196F3;
-                    border: 2px solid #2196F3;
-                }
-            """)
-            status_layout.addWidget(radio)
-        
-        card.add_content(self.create_layout_widget(status_layout))
-        
-        # Image Size input with better spacing
-        imgsize_layout = self.create_labeled_widget("Image Size", QSpinBox())
-        self.imgsz_input = imgsize_layout.findChild(QSpinBox)
-        self.imgsz_input.setRange(1000, 99999)
-        self.imgsz_input.setValue(12800)  # Default value
-        default_imgsz = int(self.config.get("imgsz")) if self.config.get("imgsz") else 12800
-        if 1000 <= default_imgsz <= 99999:
-            self.imgsz_input.setValue(default_imgsz)
-        self.imgsz_input.setStyleSheet("""
-            QSpinBox {
-                border: 2px solid #e0e0e0;
-                border-radius: 8px;
-                padding: 12px 16px;
-                background-color: white;
-                min-height: 25px;
-                font-size: 13px;
-                margin-top: 8px;
-            }
-        """)
-        card.add_content(imgsize_layout)
-        
-        # IOU Threshold with better spacing
-        iou_layout = self.create_labeled_widget("IOU Threshold", QDoubleSpinBox())
-        self.iou_slider = iou_layout.findChild(QDoubleSpinBox)
-        self.iou_slider.setRange(0.0, 1.0)
-        self.iou_slider.setSingleStep(0.1)
-        default_iou = float(self.config.get("iou", 0.2))
-        self.iou_slider.setValue(default_iou)
-        self.iou_slider.setStyleSheet("""
-            QDoubleSpinBox {
-                border: 2px solid #e0e0e0;
-                border-radius: 8px;
-                padding: 12px 16px;
-                background-color: white;
-                min-height: 25px;
-                font-size: 13px;
-                margin-top: 8px;
-            }
-        """)
-        card.add_content(iou_layout)
-        
-        # Conversion checkboxes with better spacing
-        conversion_layout = QHBoxLayout()
-        conversion_layout.setSpacing(20)  # Added spacing between checkboxes
-        
-        self.kml_checkbox = QCheckBox("Convert to KML")
-        default_kml = self.config.get("convert_kml") if self.config.get("convert_kml") else "false"
-        self.kml_checkbox.setChecked(default_kml == "true")
-        
-        self.shp_checkbox = QCheckBox("Convert to SHP")
-        default_shp = self.config.get("convert_shp") if self.config.get("convert_shp") else "true"
-        self.shp_checkbox.setChecked(default_shp == "true")
-        
-        for checkbox in [self.kml_checkbox, self.shp_checkbox]:
-            checkbox.setStyleSheet("""
-                QCheckBox {
-                    font-size: 14px;
-                    color: #333333;
-                    spacing: 12px;
-                    margin: 8px 0px;
-                }
-                QCheckBox::indicator {
-                    width: 20px;
-                    height: 20px;
-                    border: 2px solid #2196F3;
-                    border-radius: 4px;
-                }
-                QCheckBox::indicator:checked {
-                    background-color: #2196F3;
-                }
-            """)
-            conversion_layout.addWidget(checkbox)
-        
-        card.add_content(self.create_layout_widget(conversion_layout))
-        
-        # Confidence Threshold with better spacing
-        conf_layout = self.create_labeled_widget("Confidence Threshold", QDoubleSpinBox())
-        self.conf_slider = conf_layout.findChild(QDoubleSpinBox)
-        self.conf_slider.setRange(0.0, 1.0)
-        self.conf_slider.setSingleStep(0.1)
-        default_conf = float(self.config.get("conf", 0.2))
-        self.conf_slider.setValue(default_conf)
-        self.conf_slider.setStyleSheet("""
-            QDoubleSpinBox {
-                border: 2px solid #e0e0e0;
-                border-radius: 8px;
-                padding: 12px 16px;
-                background-color: white;
-                min-height: 25px;
-                font-size: 13px;
-                margin-top: 8px;
-            }
-        """)
-        card.add_content(conf_layout)
-        
-        # Settings buttons with better spacing
-        settings_layout = QHBoxLayout()
-        settings_layout.setSpacing(15)  # Added spacing between buttons
-        
-        save_settings_button = QPushButton("Save Settings")
-        save_settings_button.setStyleSheet("""
-            QPushButton {
-                background-color: #FF9800;
-                color: white;
-                border: none;
-                border-radius: 8px;
-                padding: 15px 25px;
-                font-weight: bold;
-                font-size: 13px;
-                min-width: 120px;
-                min-height: 25px;
-            }
-            QPushButton:hover {
-                background-color: #F57C00;
-            }
-            QPushButton:pressed {
-                background-color: #E65100;
-            }
-        """)
-        save_settings_button.clicked.connect(self.save_settings)
-        settings_layout.addWidget(save_settings_button)
-        
-        reset_settings_button = QPushButton("Reset Settings")
-        reset_settings_button.setStyleSheet("""
-            QPushButton {
-                background-color: #F44336;
-                color: white;
-                border: none;
-                border-radius: 8px;
-                padding: 15px 25px;
-                font-weight: bold;
-                font-size: 13px;
-                min-width: 120px;
-                min-height: 25px;
-            }
-            QPushButton:hover {
-                background-color: #D32F2F;
-            }
-            QPushButton:pressed {
-                background-color: #B71C1C;
-            }
-        """)
-        reset_settings_button.clicked.connect(self.reset_settings)
-        settings_layout.addWidget(reset_settings_button)
-        
-        card.add_content(self.create_layout_widget(settings_layout))
-        
-        parent_layout.addWidget(card)
-        
-    def create_annotation_settings_card(self, parent_layout):
-        """Create modern annotation settings card"""
-        card = ModernCard("Annotation Settings", "")
-        
-        # Max Detection with better spacing
-        max_det_layout = self.create_labeled_widget("Max Detection", QSpinBox())
-        self.max_det_input = max_det_layout.findChild(QSpinBox)
-        self.max_det_input.setRange(1, 50000)
-        default_max_det = int(self.config.get("max_det", 10000))
-        self.max_det_input.setValue(default_max_det)
-        self.max_det_input.setStyleSheet("""
-            QSpinBox {
-                border: 2px solid #e0e0e0;
-                border-radius: 8px;
-                padding: 12px 16px;
-                background-color: white;
-                min-height: 25px;
-                font-size: 13px;
-                margin-top: 8px;
-            }
-        """)
-        card.add_content(max_det_layout)
-        
-        # Line Width with better spacing
-        line_width_layout = self.create_labeled_widget("Line Width", QSpinBox())
-        self.line_width_input = line_width_layout.findChild(QSpinBox)
-        self.line_width_input.setRange(1, 10)
-        default_line_width = int(self.config.get("line_width", 3))
-        self.line_width_input.setValue(default_line_width)
-        self.line_width_input.setStyleSheet("""
-            QSpinBox {
-                border: 2px solid #e0e0e0;
-                border-radius: 8px;
-                padding: 12px 16px;
-                background-color: white;
-                min-height: 25px;
-                font-size: 13px;
-                margin-top: 8px;
-            }
-        """)
-        card.add_content(line_width_layout)
-        
-        # Display checkboxes with better spacing
-        display_layout = QVBoxLayout()
-        display_layout.setSpacing(16)  # Added spacing between elements
-        
-        # Class Selection Combo Box
-        class_selection_layout = self.create_labeled_widget("Class Selection", QComboBox())
-        self.class_selection_combo = class_selection_layout.findChild(QComboBox)
-        
-        # Get current model name
-        current_model = self.config.get("model", "yolov8n-pokok-kuning")
-        
-        # Get class names from model
-        class_names = self.get_model_class_names(current_model)
-        
-        # Add "All Classes" option and individual classes
-        self.class_selection_combo.addItem("All Classes")
-        for class_name in class_names:
-            self.class_selection_combo.addItem(class_name)
-        
-        # Set default selection from config or "All Classes"
-        default_class_selection = self.config.get("class_selection", "All Classes")
-        if default_class_selection in [self.class_selection_combo.itemText(i) for i in range(self.class_selection_combo.count())]:
-            self.class_selection_combo.setCurrentText(default_class_selection)
-        else:
-            self.class_selection_combo.setCurrentText("All Classes")
-        
-        self.class_selection_combo.setStyleSheet("""
-            QComboBox {
-                border: 2px solid #e0e0e0;
-                border-radius: 8px;
-                padding: 12px 16px;
-                background-color: white;
-                min-height: 25px;
-                font-size: 13px;
-                margin-top: 8px;
-            }
-            QComboBox::drop-down {
-                border: none;
-                width: 30px;
-            }
-            QComboBox::down-arrow {
-                image: none;
-                border-left: 5px solid transparent;
-                border-right: 5px solid transparent;
-                border-top: 5px solid #666;
-                margin-right: 10px;
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 6px 0 6px;
+                background-color: #f8f9fa;
             }
         """)
         
-        card.add_content(class_selection_layout)
+        config_layout = QVBoxLayout(config_group)
+        config_layout.setSpacing(10)
+        config_layout.setContentsMargins(10, 10, 10, 10)
         
-        # Checkboxes for display options
-        checkbox_layout = QHBoxLayout()
-        checkbox_layout.setSpacing(20)  # Added spacing between checkboxes
+        # Configuration table
+        self.config_table = ConfigurationTable()
+        config_layout.addWidget(self.config_table)
         
-        self.show_labels_checkbox = QCheckBox("Show Labels")
-        default_show_labels = self.config.get("show_labels") if self.config.get("show_labels") else "true"
-        self.show_labels_checkbox.setChecked(default_show_labels == "true")
-        
-        self.show_conf_checkbox = QCheckBox("Show Threshold")
-        default_show_conf = self.config.get("show_conf") if self.config.get("show_conf") else "false"
-        self.show_conf_checkbox.setChecked(default_show_conf == "true")
-        
-        for checkbox in [self.show_labels_checkbox, self.show_conf_checkbox]:
-            checkbox.setStyleSheet("""
-                QCheckBox {
-                    font-size: 14px;
-                    color: #333333;
-                    spacing: 12px;
-                    margin: 8px 0px;
-                }
-                QCheckBox::indicator {
-                    width: 20px;
-                    height: 20px;
-                    border: 2px solid #2196F3;
-                    border-radius: 4px;
-                }
-                QCheckBox::indicator:checked {
-                    background-color: #2196F3;
-                }
-            """)
-            checkbox_layout.addWidget(checkbox)
-        
-        card.add_content(self.create_layout_widget(checkbox_layout))
-        
-        # Start Processing button with better spacing and sizing
-        start_button = QPushButton(" Start Processing")
-        
-        # Add rocket icon to start button
-        rocket_icon_path = self.get_asset_path('rocket_icon.svg')
-        if os.path.exists(rocket_icon_path):
-            start_button.setIcon(QIcon(rocket_icon_path))
-            start_button.setIconSize(QSize(22, 22))  # Slightly larger icon
-        
-        start_button.setStyleSheet("""
-            QPushButton {
-                background-color: #4CAF50;
-                color: white;
-                border: none;
-                border-radius: 8px;
-                padding: 18px 28px;
-                font-size: 16px;
-                font-weight: bold;
-                margin-top: 20px;
-                margin-bottom: 10px;
-                min-height: 50px;
-            }
-            QPushButton:hover {
-                background-color: #45a049;
-            }
-            QPushButton:pressed {
-                background-color: #3d8b40;
-            }
-        """)
-        start_button.clicked.connect(self.start_conversion)
-        card.add_content(start_button)
-        
-        parent_layout.addWidget(card)
-        
-    def create_labeled_widget(self, label_text, widget):
-        """Create a labeled widget with consistent styling"""
-        layout = QVBoxLayout()
-        layout.setSpacing(8)  # Added consistent spacing
-        
-        label = QLabel(label_text)
-        label.setStyleSheet("""
-            QLabel {
-                font-weight: bold;
-                color: #333333;
-                margin-bottom: 8px;
-                font-size: 14px;
-            }
-        """)
-        layout.addWidget(label)
-        layout.addWidget(widget)
-        
-        return self.create_layout_widget(layout)
-        
-    def create_layout_widget(self, layout):
-        """Create a widget from a layout"""
-        widget = QWidget()
-        widget.setLayout(layout)
-        widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
-        return widget
-    
-    def set_folder_path(self, folder_path):
-        """Set folder path and update UI state properly"""
-        if not folder_path or not os.path.exists(folder_path):
-            return
-            
-        self.selected_folder = folder_path
-        
-        # Check if folder contains .tif files
-        try:
-            has_tiff_files = any(f.lower().endswith(('.tif', '.tiff')) for f in os.listdir(folder_path))
-            
-            if has_tiff_files:
-                # Truncate long folder paths for better display
-                display_path = folder_path
-                if len(folder_path) > 50:
-                    display_path = "..." + folder_path[-47:]
-                
-                self.folder_path_input.setText(f"Selected Folder: {display_path}")
-                self.folder_path_input.setToolTip(folder_path)  # Show full path on hover
-                self.folder_path_input.setStyleSheet("""
-                    QLabel {
-                        border: 2px solid #2196F3;
-                        border-radius: 8px;
-                        padding: 15px;
-                        background-color: #e3f2fd;
-                        color: #1976D2;
-                        min-height: 25px;
-                        font-size: 13px;
-                        margin-right: 10px;
-                    }
-                """)
-                self.save_annotated_checkbox.setEnabled(True)
-            else:
-                self.folder_path_input.setText("The folder does not contain any .tif files.")
-                self.folder_path_input.setToolTip("")  # Clear tooltip
-                self.folder_path_input.setStyleSheet("""
-                    QLabel {
-                        border: 2px dashed #cccccc;
-                        border-radius: 8px;
-                        padding: 15px;
-                        background-color: #fafafa;
-                        color: #666666;
-                        min-height: 25px;
-                        font-size: 13px;
-                        margin-right: 10px;
-                    }
-                """)
-                self.save_annotated_checkbox.setEnabled(False)
-                self.selected_folder = None  # Reset if no valid files
-        except Exception as e:
-            print(f"Error checking folder contents: {e}")
-            self.selected_folder = None
+        parent_layout.addWidget(config_group)
 
     def create_progress_section(self):
         self.progress_dialog = QWidget(self)
         self.progress_dialog.setWindowFlags(Qt.Window | Qt.WindowTitleHint | Qt.CustomizeWindowHint)
-        self.progress_dialog.setWindowTitle("Progress Convert")
+        self.progress_dialog.setWindowTitle("Processing Progress")
         self.progress_dialog.setGeometry(200, 200, 500, 400)
         self.progress_dialog.hide()
         
+        # Apply consistent styling
+        self.progress_dialog.setStyleSheet("""
+            QWidget {
+                background-color: #f8f9fa;
+                font-family: 'Segoe UI', 'Tahoma', sans-serif;
+                font-size: 11px;
+                color: #495057;
+            }
+        """)
+        
         layout = QVBoxLayout(self.progress_dialog)
+        layout.setContentsMargins(15, 15, 15, 15)
+        layout.setSpacing(10)
         
         # Timer label
         self.timer_label = QLabel("Elapsed Time: 0.00 seconds")
+        self.timer_label.setStyleSheet("font-weight: 600; font-size: 12px;")
         layout.addWidget(self.timer_label)
         
-        layout.addWidget(QLabel("Processing Progress:"))
+        # Progress label
+        progress_label = QLabel("Processing Progress:")
+        progress_label.setStyleSheet("font-weight: 600; margin-top: 5px;")
+        layout.addWidget(progress_label)
         
         # Progress bar
         self.progress_bar = QProgressBar()
+        self.progress_bar.setStyleSheet("""
+            QProgressBar {
+                border: 1px solid #d1d9e6;
+                border-radius: 4px;
+                text-align: center;
+                font-size: 11px;
+                font-weight: 500;
+            }
+            QProgressBar::chunk {
+                background-color: #007bff;
+                border-radius: 3px;
+            }
+        """)
         layout.addWidget(self.progress_bar)
         
         # Progress text
         self.progress_text = QLabel("0 of 0 images processed")
+        self.progress_text.setStyleSheet("font-size: 11px; color: #6c757d;")
         layout.addWidget(self.progress_text)
         
         # Activity log
-        layout.addWidget(QLabel("Activity Log:"))
+        log_label = QLabel("Activity Log:")
+        log_label.setStyleSheet("font-weight: 600; margin-top: 10px;")
+        layout.addWidget(log_label)
+        
         self.activity_log = QTextEdit()
         self.activity_log.setReadOnly(True)
+        self.activity_log.setStyleSheet("""
+            QTextEdit {
+                border: 1px solid #d1d9e6;
+                border-radius: 4px;
+                padding: 8px;
+                font-family: 'Consolas', 'Monaco', monospace;
+                font-size: 10px;
+                background-color: white;
+            }
+        """)
         layout.addWidget(self.activity_log)
         
         # Save Log button
         save_log_button = QPushButton("Save Log")
         save_log_button.setStyleSheet("""
             QPushButton {
-                background-color: #4CAF50;
+                background-color: #28a745;
                 color: white;
                 border: none;
-                border-radius: 8px;
-                padding: 12px 20px;
-                font-weight: bold;
-                min-width: 100px;
+                border-radius: 4px;
+                padding: 8px 16px;
+                font-weight: 500;
+                font-size: 11px;
+                min-width: 80px;
             }
             QPushButton:hover {
-                background-color: #45a049;
-            }
-            QPushButton:pressed {
-                background-color: #3d8b40;
+                background-color: #218838;
             }
         """)
         save_log_button.clicked.connect(self.save_log)
-        layout.addWidget(save_log_button)
         
-        # Annotated progress section (initially hidden)
-        self.annotated_group = QGroupBox("Saving Annotated Images")
-        annotated_layout = QVBoxLayout()
+        # Close button
+        close_button = QPushButton("Close")
+        close_button.setStyleSheet("""
+            QPushButton {
+                background-color: #6c757d;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 8px 16px;
+                font-weight: 500;
+                font-size: 11px;
+                min-width: 80px;
+            }
+            QPushButton:hover {
+                background-color: #545b62;
+            }
+        """)
+        close_button.clicked.connect(self.close_progress_dialog)
         
-        self.annotated_progress_bar = QProgressBar()
-        annotated_layout.addWidget(self.annotated_progress_bar)
+        # Create horizontal layout for buttons
+        button_layout = QHBoxLayout()
+        button_layout.addWidget(save_log_button)
+        button_layout.addWidget(close_button)
+        button_layout.addStretch()  # Push buttons to the left
         
-        self.annotated_progress_text = QLabel("0 of 0 images processed")
-        annotated_layout.addWidget(self.annotated_progress_text)
-        
-        self.annotated_activity_log = QTextEdit()
-        self.annotated_activity_log.setReadOnly(True)
-        annotated_layout.addWidget(self.annotated_activity_log)
-        
-        self.annotated_group.setLayout(annotated_layout)
-        layout.addWidget(self.annotated_group)
-        self.annotated_group.hide()
-    
-    def create_logging_section(self):
-        # This function is no longer needed as logging is integrated into the progress dialog
-        pass
+        layout.addLayout(button_layout)
     
     def add_log_message(self, message):
-        """Add a message to the activity log in the progress dialog"""
+        """Add a message to the activity log"""
         timestamp = time.strftime('%H:%M:%S')
         formatted_message = f"[{timestamp}] {message}"
         
-        # Add to activity log in the progress dialog
+        # Add to activity log
         self.activity_log.append(formatted_message)
         
         # Auto-scroll to bottom
@@ -1073,26 +882,243 @@ class MainWindow(QMainWindow):
         print(formatted_message)
     
     def clear_log(self):
-        """Clear the log display in the progress dialog"""
+        """Clear the log display"""
         self.activity_log.clear()
-        self.activity_log.append("=== Digital Architect — PT Sawit Sumbernan Sarana - ACTIVITY LOG ===\n")
+        self.activity_log.append("=== Pokok Kuning Detection System - ACTIVITY LOG ===\n")
         self.activity_log.append(f"Cleared at: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
         self.activity_log.append("-" * 50 + "\n")
 
-    def select_folder(self):
-        # Start from last used folder if available
-        start_dir = self.selected_folder if self.selected_folder and os.path.exists(self.selected_folder) else ""
-        folder_path = QFileDialog.getExistingDirectory(self, "Select Folder", start_dir)
+    def toggle_progress_display(self):
+        """Toggle the visibility of the progress dialog"""
+        if self.progress_dialog.isHidden():
+            self.progress_dialog.show()
+            # Initialize log with header if it's empty
+            if not self.activity_log.toPlainText().strip():
+                self.activity_log.append("=== Pokok Kuning Detection System - ACTIVITY LOG ===\n")
+                self.activity_log.append(f"Started at: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+                self.activity_log.append("-" * 50 + "\n")
+        else:
+            self.progress_dialog.hide()
+
+    def save_log(self):
+        """Save the current activity log to a text file"""
+        folder_path = "output"
+        os.makedirs(folder_path, exist_ok=True)
+        log_file_path = os.path.join(folder_path, "activity_log.txt")
         
-        if folder_path:
-            # Use the centralized method to set and validate folder
-            self.set_folder_path(folder_path)
+        with open(log_file_path, "w") as f:
+            f.write(self.activity_log.toPlainText())
+        
+        QMessageBox.information(self, "Log Saved", f"Activity log has been saved to:\n{log_file_path}")
+        print(f"Activity log saved to: {log_file_path}")
+
+    def close_progress_dialog(self):
+        """Close the progress dialog"""
+        self.progress_dialog.hide()
+        self.progress_dialog.close()
+
+    # Placeholder methods for compatibility with existing code
+    def update_model_path_display(self):
+        """Update model path display"""
+        if self.selected_model and self.file_panel:
+            self.file_panel.model_input.setText(self.selected_model)
+    
+    def update_class_selection_combo(self):
+        """Placeholder method for class selection combo"""
+        pass
+    
+    def start_conversion(self):
+        """Start the image processing conversion"""
+        if not self.selected_folder:
+            QMessageBox.warning(self, "No Folder Selected", "Please select a folder containing images first.")
+            return
+        
+        if not self.selected_model:
+            QMessageBox.warning(self, "No Model Selected", "Please select an AI model first.")
+            return
+        
+        # Get current configuration
+        config = self.get_current_config()
+        
+        # Start processing thread
+        self.processing_thread = ProcessingThread(self.selected_folder, config)
+        self.processing_thread.progress_update.connect(self.update_progress)
+        self.processing_thread.processing_finished.connect(self.processing_complete)
+        self.processing_thread.start()
+        
+        # Show progress dialog
+        self.toggle_progress_display()
+        
+        # Update status
+        self.status_panel.process_status.setText("Process Status : Processing")
+        self.add_log_message("Started processing images...")
+    
+    def update_progress(self, progress_data):
+        """Update progress display"""
+        if hasattr(self, 'progress_bar') and hasattr(self, 'progress_text'):
+            if 'current' in progress_data and 'total' in progress_data:
+                current = progress_data['current']
+                total = progress_data['total']
+                
+                # Update progress bar
+                self.progress_bar.setMaximum(total)
+                self.progress_bar.setValue(current)
+                
+                # Update progress text
+                self.progress_text.setText(f"{current} of {total} images processed")
+                
+                # Update status
+                if hasattr(self, 'status_panel'):
+                    self.status_panel.process_status.setText(f"Process Status : Processing ({current}/{total})")
+                
+                # Add to log
+                if 'message' in progress_data:
+                    self.add_log_message(progress_data['message'])
+    
+    def processing_complete(self, results):
+        """Handle processing completion"""
+        if 'error' in results:
+            QMessageBox.critical(self, "Processing Error", f"Processing failed: {results['error']}")
+            self.add_log_message(f"❌ Processing failed: {results['error']}")
+        else:
+            # Update status
+            self.status_panel.process_status.setText("Process Status : Completed")
             
-            # Auto-save the folder path if it's valid
-            if self.selected_folder:  # Only save if validation passed
+            # Show results
+            message = f"""Processing completed successfully!
+
+Total files processed: {results.get('total_files', 0)}
+Successful: {results.get('successful_processed', 0)}
+Failed: {results.get('failed_processed', 0)}
+Total time: {results.get('total_time', 0):.2f} seconds
+Abnormal detections: {results.get('total_abnormal', 0)}
+Normal detections: {results.get('total_normal', 0)}
+
+Results saved to output folder."""
+            
+            QMessageBox.information(self, "Processing Complete", message)
+            self.add_log_message("✅ Processing completed successfully")
+            
+            # Update counters
+            self.total_processed = results.get('successful_processed', 0)
+            self.total_abnormal = results.get('total_abnormal', 0)
+            self.total_normal = results.get('total_normal', 0)
+        
+        # Reset progress bar
+        if hasattr(self, 'progress_bar'):
+            self.progress_bar.setValue(0)
+    
+    def update_timer(self):
+        """Update timer display"""
+        pass
+    
+    def get_current_config(self):
+        """Get current configuration from UI elements"""
+        config = {}
+        
+        # Get model path
+        if self.selected_model:
+            config["model"] = self.selected_model
+        
+        # Get file options
+        if hasattr(self, 'file_panel'):
+            config["save_annotated"] = str(self.file_panel.save_annotated.isChecked()).lower()
+            config["convert_kml"] = str(self.file_panel.export_kml.isChecked()).lower()
+            config["convert_shp"] = str(self.file_panel.export_shp.isChecked()).lower()
+        
+        # Get configuration from table if available
+        if hasattr(self, 'config_table'):
+            for row in range(self.config_table.rowCount()):
+                param = self.config_table.item(row, 0).text()
+                value = self.config_table.item(row, 1).text()
+                # Map parameter names to config keys
+                if param == "Image Size":
+                    config["imgsz"] = value
+                elif param == "Confidence":
+                    config["conf"] = value
+                elif param == "IOU Threshold":
+                    config["iou"] = value
+                elif param == "Max Detection":
+                    config["max_det"] = value
+                elif param == "Line Width":
+                    config["line_width"] = value
+                elif param == "Convert KML":
+                    config["convert_kml"] = value.lower()
+                elif param == "Convert SHP":
+                    config["convert_shp"] = value.lower()
+                elif param == "Show Labels":
+                    config["show_labels"] = value.lower()
+                elif param == "Show Confidence":
+                    config["show_conf"] = value.lower()
+        
+        # Add default values for required keys if not present
+        defaults = {
+            "imgsz": "12800",
+            "iou": "0.2",
+            "conf": "0.2",
+            "max_det": "10000",
+            "line_width": "3",
+            "show_labels": "true",
+            "show_conf": "false",
+            "status_blok": "Full Blok",
+            "class_selection": "All Classes"
+        }
+        
+        for key, default_value in defaults.items():
+            if key not in config:
+                config[key] = default_value
+        
+        # Ensure required keys are present
+        required_keys = ["model", "imgsz", "iou", "conf", "convert_shp", "convert_kml", 
+                        "max_det", "line_width", "show_labels", "show_conf", 
+                        "status_blok", "save_annotated"]
+        
+        for key in required_keys:
+            if key not in config:
+                if key == "model":
+                    config[key] = "yolov8n-pokok-kuning"
+                elif key == "save_annotated":
+                    config[key] = "true"
+                elif key == "convert_shp":
+                    config[key] = "true"
+                elif key == "convert_kml":
+                    config[key] = "false"
+                elif key == "status_blok":
+                    config[key] = "Full Blok"
+                else:
+                    config[key] = defaults.get(key, "")
+        
+        return config
+    
+    def select_model(self):
+        """Open model browser dialog and set selected model"""
+        # Start from model directory if available
+        script_dir = os.path.dirname(os.path.abspath(__file__))  # ui/
+        parent_dir = os.path.dirname(script_dir)                 # pokok_kuning_gui/
+        model_folder = os.path.join(parent_dir, "model")         # pokok_kuning_gui/model/
+        start_dir = model_folder if os.path.exists(model_folder) else ""
+        
+        model_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select Model File",
+            start_dir,
+            "Model Files (*.pt);;All Files (*)"
+        )
+        
+        if model_path:
+            if os.path.exists(model_path):
+                self.selected_model = model_path
+                self.file_panel.model_input.setText(model_path)
+                self.status_panel.model_info.setText(f"AI Model : {os.path.basename(model_path)}")
+                
+                # Auto-save the model path
                 current_config = self.get_current_config()
-                current_config["last_folder_path"] = folder_path
+                current_config["model"] = model_path
                 save_config(current_config)
+                
+                self.add_log_message(f"Selected model: {model_path}")
+            else:
+                QMessageBox.warning(self, "Invalid Model", "Please select a valid model file.")
     
     def save_settings(self):
         """Save current settings to configuration"""
@@ -1100,8 +1126,10 @@ class MainWindow(QMainWindow):
             current_config = self.get_current_config()
             save_config(current_config)
             QMessageBox.information(self, "Success", "Settings saved successfully!")
+            self.add_log_message("Settings saved successfully")
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to save settings: {str(e)}")
+            self.add_log_message(f"❌ Failed to save settings: {str(e)}")
     
     def reset_settings(self):
         """Reset settings to default values"""
@@ -1115,530 +1143,173 @@ class MainWindow(QMainWindow):
             )
             
             if reply == QMessageBox.Yes:
-                # Reset to default values
-                self.model_combo.setCurrentText("yolov8n-pokok-kuning")
-                self.imgsz_input.setValue(12800)
-                self.iou_slider.setValue(0.2)
-                self.conf_slider.setValue(0.2)
-                self.kml_checkbox.setChecked(False)
-                self.shp_checkbox.setChecked(True)
-                self.status_full_radio.setChecked(True)
-                self.status_half_radio.setChecked(False)
+                # Reset file options
+                if hasattr(self, 'file_panel'):
+                    self.file_panel.save_annotated.setChecked(True)
+                    self.file_panel.export_kml.setChecked(False)
+                    self.file_panel.export_shp.setChecked(True)
                 
-                # Update model path display
-                self.update_model_path_display()
+                # Reset model to default
+                default_model = "yolov8n-pokok-kuning"
+                self.selected_model = default_model
+                if hasattr(self, 'file_panel'):
+                    self.file_panel.model_input.setText(default_model)
+                self.status_panel.model_info.setText(f"AI Model : {default_model}")
+                
+                # Update configuration table if available
+                if hasattr(self, 'config_table'):
+                    self.config_table.populate_sample_data()
+                
+                # Synchronize UI with reset values
+                self.sync_config_with_ui()
                 
                 QMessageBox.information(self, "Success", "Settings reset to default values!")
+                self.add_log_message("Settings reset to default values")
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to reset settings: {str(e)}")
-
-    def select_model(self):
-        """Open a file dialog to select a .pt model file."""
-        print(f"🔍 [DEBUG] select_model() called")
-        
-        # Start from model directory if available
-        model_folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "model")
-        start_dir = model_folder if os.path.exists(model_folder) else ""
-        print(f"🔍 [DEBUG] Start directory: {start_dir}")
-        
-        model_path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Select Model File",
-            start_dir,
-            "Model Files (*.pt);;All Files (*)"
-        )
-        
-        print(f"🔍 [DEBUG] Selected model path: {model_path}")
-        
-        if model_path:
-            print(f"🔍 [DEBUG] Model path exists: {os.path.exists(model_path)}")
-            
-            # Update the model path display
-            self.model_path_input.setText(model_path)
-            
-            # Extract model name without extension and update combo box
-            model_name = os.path.splitext(os.path.basename(model_path))[0]
-            print(f"🔍 [DEBUG] Extracted model name: {model_name}")
-            
-            # Add to combo box if not already there
-            if self.model_combo.findText(model_path) == -1:
-                self.model_combo.addItem(model_path)
-                print(f"🔍 [DEBUG] Added custom model path to combo box: {model_path}")
-            
-            # Set as current selection
-            self.model_combo.setCurrentText(model_path)
-            print(f"🔍 [DEBUG] Set current model to: {model_path}")
-            
-            # Update display
-            self.update_model_path_display()
-            
-            # Auto-save the model path
-            current_config = self.get_current_config()
-            current_config["model"] = model_path  # Save full path for custom models
-            save_config(current_config)
-            print(f"🔍 [DEBUG] Saved model path to config: {model_path}")
+            self.add_log_message(f"❌ Failed to reset settings: {str(e)}")
     
-    def on_model_combo_changed(self, text):
-        """Update the model path display when the model combo box changes."""
-        print(f"🔍 [DEBUG] Model combo changed to: {text}")
-        self.update_model_path_display()
-        self.update_class_selection_combo()
-    
-    def update_class_selection_combo(self):
-        """Update the class selection combo box with classes from the new model"""
-        try:
-            current_model = self.model_combo.currentText()
-            print(f"🔍 [DEBUG] Updating class selection for model: {current_model}")
-            
-            # Clear current items
-            self.class_selection_combo.clear()
-            
-            # Get class names from the new model
-            class_names = self.get_model_class_names(current_model)
-            
-            # Add "All Classes" option and individual classes
-            self.class_selection_combo.addItem("All Classes")
-            for class_name in class_names:
-                self.class_selection_combo.addItem(class_name)
-            
-            # Set to "All Classes" by default when model changes
-            self.class_selection_combo.setCurrentText("All Classes")
-            
-            print(f"🔍 [DEBUG] Updated class selection with {len(class_names)} classes: {class_names}")
-            
-        except Exception as e:
-            print(f"🔍 [DEBUG] Error updating class selection: {e}")
-            # Fallback to default classes
-            self.class_selection_combo.clear()
-            self.class_selection_combo.addItem("All Classes")
-            self.class_selection_combo.addItem("Class 0")
-            self.class_selection_combo.addItem("Class 1")
-            self.class_selection_combo.setCurrentText("All Classes")
-    
-    def update_model_path_display(self):
-        """Update the model path display to show the currently selected model."""
-        current_model_name = self.model_combo.currentText()
-        print(f"🔍 [DEBUG] update_model_path_display() called with: {current_model_name}")
+    def select_folder(self):
+        """Open folder browser dialog and set selected folder"""
+        # Start from last used folder if available
+        start_dir = self.selected_folder if self.selected_folder and os.path.exists(self.selected_folder) else ""
+        folder_path = QFileDialog.getExistingDirectory(self, "Select Folder", start_dir)
         
-        # Check if it's a custom model (full path)
-        if os.path.isabs(current_model_name) or current_model_name.startswith("C:"):
-            print(f"🔍 [DEBUG] Custom model detected (full path): {current_model_name}")
-            model_path = current_model_name
+        if folder_path:
+            self.set_folder_path(folder_path)
             
-            if os.path.exists(model_path):
-                print(f"🔍 [DEBUG] Custom model exists: {model_path}")
-                # Truncate long paths for better display
-                display_path = model_path
-                if len(model_path) > 50:
-                    display_path = "..." + model_path[-47:]
-                
-                self.model_path_input.setText(display_path)
-                self.model_path_input.setToolTip(model_path)  # Show full path on hover
-                # Reset to normal styling
-                self.model_path_input.setStyleSheet("""
-                    QLabel {
-                        border: 2px dashed #cccccc;
-                        border-radius: 8px;
-                        padding: 15px;
-                        background-color: #fafafa;
-                        color: #666666;
-                        min-height: 25px;
-                        font-size: 13px;
-                        margin-right: 10px;
-                    }
-                """)
-            else:
-                print(f"🔍 [DEBUG] Custom model NOT found: {model_path}")
-                self.model_path_input.setText(f"Model not found: {os.path.basename(model_path)}")
-                self.model_path_input.setToolTip("")  # Clear tooltip
-                # Show error styling
-                self.model_path_input.setStyleSheet("""
-                    QLabel {
-                        border: 2px dashed #f44336;
-                        border-radius: 8px;
-                        padding: 15px;
-                        background-color: #ffebee;
-                        color: #d32f2f;
-                        min-height: 25px;
-                        font-size: 13px;
-                        margin-right: 10px;
-                    }
-                """)
+            # Auto-save the folder path if it's valid
+            if self.selected_folder:
+                current_config = self.get_current_config()
+                current_config["last_folder_path"] = folder_path
+                save_config(current_config)
+    
+    def set_folder_path(self, folder_path):
+        """Set and validate the selected folder path"""
+        if os.path.exists(folder_path) and os.path.isdir(folder_path):
+            self.selected_folder = folder_path
+            self.file_panel.folder_input.setText(folder_path)
+            self.status_panel.selected_folder.setText(f"Select Folder : {os.path.basename(folder_path)}")
+            
+            # Count files in folder
+            image_extensions = ['.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif']
+            files = [f for f in os.listdir(folder_path) 
+                    if os.path.isfile(os.path.join(folder_path, f)) and 
+                    any(f.lower().endswith(ext) for ext in image_extensions)]
+            
+            self.total_files = len(files)
+            self.status_panel.log_count.setText(f"Total Files : {self.total_files}")
+            
+            self.add_log_message(f"Selected folder: {folder_path} ({self.total_files} image files)")
         else:
-            # It's a built-in model name, construct the path
-            print(f"🔍 [DEBUG] Built-in model detected: {current_model_name}")
-            # Use the same path resolution as get_model_names()
-            model_folder = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "model")
-            model_path = os.path.join(model_folder, f"{current_model_name}.pt")
-            print(f"🔍 [DEBUG] Constructed model path: {model_path}")
-            
-            if os.path.exists(model_path):
-                print(f"🔍 [DEBUG] Built-in model exists: {model_path}")
-                self.model_path_input.setText(f"{current_model_name}.pt")
-                self.model_path_input.setToolTip(model_path)  # Show full path on hover
-                # Reset to normal styling
-                self.model_path_input.setStyleSheet("""
-                    QLabel {
-                        border: 2px dashed #cccccc;
-                        border-radius: 8px;
-                        padding: 15px;
-                        background-color: #fafafa;
-                        color: #666666;
-                        min-height: 25px;
-                        font-size: 13px;
-                        margin-right: 10px;
-                    }
-                """)
-            else:
-                print(f"🔍 [DEBUG] Built-in model NOT found: {model_path}")
-                self.model_path_input.setText(f"Model not found: {current_model_name}.pt")
-                self.model_path_input.setToolTip("")  # Clear tooltip
-                # Show error styling
-                self.model_path_input.setStyleSheet("""
-                    QLabel {
-                        border: 2px dashed #f44336;
-                        border-radius: 8px;
-                        padding: 15px;
-                        background-color: #ffebee;
-                        color: #d32f2f;
-                        min-height: 25px;
-                        font-size: 13px;
-                        margin-right: 10px;
-                    }
-                """)
-    
-    def start_conversion(self):
-        if not self.selected_folder:
-            print("No folder selected for conversion")
-            return
-        
-        print(f"Starting conversion for folder: {self.selected_folder}")
-        
-        # Add log message
-        self.add_log_message(f"Starting conversion for folder: {self.selected_folder}")
-        
-        # Show progress dialog
-        self.progress_dialog.show()
-        self.progress_bar.setValue(0)
-        self.progress_text.setText("Starting conversion...")
-        self.activity_log.clear()
-        
-        # Show/hide annotated section based on checkbox
-        if self.save_annotated_checkbox.isChecked():
-            self.annotated_group.show()
-        else:
-            self.annotated_group.hide()
-        
-        # Get current configuration
-        config = self.get_current_config()
-        
-        # Log configuration
-        self.add_log_message(f"Using model: {config.get('model', 'Unknown')}")
-        self.add_log_message(f"Image size: {config.get('imgsz', 'Unknown')}")
-        self.add_log_message(f"Confidence threshold: {config.get('conf', 'Unknown')}")
-        self.add_log_message(f"IOU threshold: {config.get('iou', 'Unknown')}")
-        
-        # Start timer
-        self.start_time = time.time()
-        self.timer_thread = QThread()
-        self.timer_thread.started.connect(self.update_timer)
-        self.timer_thread.start()
-        
-        # Start processing in a separate thread
-        print("Creating processing thread...")
-        self.add_log_message("Creating processing thread...")
-        self.processing_thread = ProcessingThread(self.selected_folder, config)
-        self.processing_thread.progress_update.connect(self.update_progress)
-        self.processing_thread.processing_finished.connect(self.processing_complete)
-        print("Starting processing thread...")
-        self.add_log_message("Starting processing thread...")
-        self.processing_thread.start()
-    
-    def update_timer(self):
-        while self.processing_thread and self.processing_thread.isRunning():
-            elapsed_time = time.time() - self.start_time
-            if elapsed_time < 60:
-                self.timer_label.setText(f"Elapsed Time: {elapsed_time:.2f} seconds")
-            else:
-                minutes = int(elapsed_time // 60)
-                seconds = int(elapsed_time % 60)
-                self.timer_label.setText(f"Elapsed Time: {minutes:02}:{seconds:02} minutes")
-            QThread.msleep(100)  # Update every 0.1 seconds
-    
-    def update_progress(self, progress_data):
-        processed = progress_data.get("processed", 0)
-        total = progress_data.get("total", 1)
-        current_file = progress_data.get("current_file", "N/A")
-        status = progress_data.get("status", "Processing")
-        abnormal_count = progress_data.get("abnormal_count", 0)
-        normal_count = progress_data.get("normal_count", 0)
-        
-        self.total_abnormal += abnormal_count
-        self.total_normal += normal_count
-        
-        # Update progress bar
-        progress = processed / total if total > 0 else 0
-        self.progress_bar.setValue(int(progress * 100))
-        self.progress_text.setText(f"{processed} of {total} images processed")
-        
-        # Update activity log using new logging function
-        log_message = f"Processing {current_file} - {abnormal_count} abnormal, {normal_count} normal - {status}"
-        self.add_log_message(log_message)
-        
-        # Save total files count for results
-        self.total_files = total
-    
-    def processing_complete(self, results):
-        try:
-            print("Processing completed, handling results...")
-            self.add_log_message("Processing completed, handling results...")
-            self.timer_thread.terminate()
-            
-            # Check if there was an error
-            if "error" in results:
-                error_msg = f"Processing failed with error: {results['error']}"
-                print(error_msg)
-                self.add_log_message(error_msg)
-                # Show error message
-                QMessageBox.critical(self, "Processing Error", 
-                                   f"Processing failed:\n{results['error']}")
-                self.progress_dialog.hide()
-                return
-            
-            self.total_processed = results.get("successful_processed", 0)
-            self.total_files = results.get("total_files", 0)
-            self.final_time = results.get("total_time", 0)
-            
-            # Show completion message
-            folder_name = os.path.basename(self.selected_folder)
-            
-            completion_msg = f"Processing completed successfully: {self.total_processed}/{self.total_files} files"
-            print(completion_msg)
-            self.add_log_message(completion_msg)
-            
-            # Log final statistics
-            self.add_log_message(f"Total processing time: {self.final_time:.2f} seconds")
-            self.add_log_message(f"Total abnormal objects: {self.total_abnormal}")
-            self.add_log_message(f"Total normal objects: {self.total_normal}")
-            self.add_log_message("=" * 50)
-            
-            # Show completion message in a popup
-            QMessageBox.information(self, "Conversion Complete", 
-                                  f"The folder '{folder_name}' has been converted successfully!\n\n"
-                                  f"Processed: {self.total_processed}/{self.total_files} files")
-            
-            # Hide progress dialog after 3 seconds
-            QTimer.singleShot(3000, self.progress_dialog.hide)
-            
-        except Exception as e:
-            error_msg = f"❌ Error in processing_complete: {str(e)}"
-            print(error_msg)
-            self.add_log_message(error_msg)
-            import traceback
-            traceback_msg = f"Traceback: {traceback.format_exc()}"
-            print(traceback_msg)
-            self.add_log_message(traceback_msg)
-            QMessageBox.critical(self, "Error", f"Error handling results: {str(e)}")
-            self.progress_dialog.hide()
+            QMessageBox.warning(self, "Invalid Folder", "Please select a valid folder.")
     
     def show_results(self):
-        msg = QMessageBox()
-        msg.setWindowTitle("Conversion Results")
+        """Show processing results"""
+        if not self.selected_folder:
+            QMessageBox.information(self, "Info", "Please select a folder and process images first.")
+            return
         
-        # Format time display
-        if self.final_time < 60:
-            time_display = f"{self.final_time:.2f} seconds"
-        else:
-            minutes = int(self.final_time // 60)
-            seconds = int(self.final_time % 60)
-            time_display = f"{minutes:02}:{seconds:02} minutes"
-        
-        result_text = f"""
-        Convert Time: {time_display}
-        Images Processed: {self.total_processed} / {self.total_files}
-        
-        Pokok Normal: {self.total_normal}
-        Pokok Abnormal: {self.total_abnormal}
-        """
-        
-        msg.setText(result_text)
-        msg.exec_()
-    
-    def save_configuration(self):
-        config = self.get_current_config()
-        if save_config(config):
-            # Show success message in a popup
-            QMessageBox.information(self, "Success", "Configuration has been saved successfully!")
-    
-    def reset_to_defaults(self):
-        """Reset all settings to default values"""
-        # Show confirmation dialog
-        reply = QMessageBox.question(
-            self, 
-            "Reset Settings", 
-            "Are you sure you want to reset all settings to default values?\n\nThis action cannot be undone.",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No
-        )
-        
-        if reply == QMessageBox.Yes:
-            # Reset all UI elements to default values
-            self.reset_ui_to_defaults()
+        # Check if output folder exists
+        output_folder = os.path.join(self.selected_folder, "output")
+        if os.path.exists(output_folder):
+            # Open output folder in file explorer
+            if sys.platform == "win32":
+                os.startfile(output_folder)
+            elif sys.platform == "darwin":
+                os.system(f"open '{output_folder}'")
+            else:
+                os.system(f"xdg-open '{output_folder}'")
             
-            # Save default configuration to database
-            default_config = self.get_default_config()
-            if save_config(default_config):
-                QMessageBox.information(self, "Reset Complete", "All settings have been reset to default values!")
-    
-    def reset_ui_to_defaults(self):
-        """Reset all UI elements to their default values"""
-        # Get available models
-        model_names = get_model_names()
-        default_model = model_names[0] if model_names else "yolov8n-pokok-kuning"
-        
-        # Reset Model AI
-        if default_model in model_names:
-            self.model_combo.setCurrentText(default_model)
-        
-        # Reset Status Blok
-        self.status_full_radio.setChecked(True)
-        self.status_half_radio.setChecked(False)
-        
-        # Reset Image Size
-        self.imgsz_input.setValue(12800)
-        
-        # Reset IOU Threshold  
-        self.iou_slider.setValue(0.2)
-        
-        # Reset conversion checkboxes
-        self.kml_checkbox.setChecked(False)
-        self.shp_checkbox.setChecked(True)
-        
-        # Reset Confidence Threshold
-        self.conf_slider.setValue(0.2)
-        
-        # Reset Max Detection
-        self.max_det_input.setValue(10000)
-        
-        # Reset Line Width
-        self.line_width_input.setValue(3)
-        
-        # Reset display checkboxes
-        self.show_labels_checkbox.setChecked(True)
-        self.show_conf_checkbox.setChecked(False)
-        
-        # Reset Class Selection
-        self.class_selection_combo.setCurrentText("All Classes")
-        
-        # Reset Save Annotated File
-        self.save_annotated_checkbox.setChecked(True)
-        self.save_annotated_checkbox.setEnabled(False)
-        
-        # Clear folder selection
-        self.selected_folder = None
-        self.folder_path_input.setText("No folder selected")
-        self.folder_path_input.setStyleSheet("""
-            QLabel {
-                border: 2px dashed #cccccc;
-                border-radius: 8px;
-                padding: 12px;
-                background-color: #fafafa;
-                color: #666666;
-                min-height: 20px;
-            }
-        """)
-    
-    def get_default_config(self):
-        """Get default configuration values"""
-        model_names = get_model_names()
-        default_model = model_names[0] if model_names else "yolov8n-pokok-kuning"
-        
-        return {
-            "model": default_model,
-            "imgsz": "12800",
-            "iou": "0.2",
-            "conf": "0.2",
-            "convert_shp": "true",
-            "convert_kml": "false",
-            "max_det": "10000",
-            "line_width": "3",
-            "show_labels": "true",
-            "show_conf": "false",
-            "class_selection": "All Classes",
-            "status_blok": "Full Blok",
-            "save_annotated": "true",
-            "last_folder_path": None
-        }
-    
-    def get_current_config(self):
-        return {
-            "model": self.model_combo.currentText(),
-            "model_path": self.get_full_model_path(),  # Add full model path
-            "imgsz": str(self.imgsz_input.value()),
-            "iou": str(self.iou_slider.value()),
-            "conf": str(self.conf_slider.value()),
-            "convert_shp": "true" if self.shp_checkbox.isChecked() else "false",
-            "convert_kml": "true" if self.kml_checkbox.isChecked() else "false",
-            "max_det": str(self.max_det_input.value()),
-            "line_width": str(self.line_width_input.value()),
-            "show_labels": "true" if self.show_labels_checkbox.isChecked() else "false",
-            "show_conf": "true" if self.show_conf_checkbox.isChecked() else "false",
-            "class_selection": self.class_selection_combo.currentText(),
-            "status_blok": "Full Blok" if self.status_full_radio.isChecked() else "Setengah Blok",
-            "save_annotated": "true" if self.save_annotated_checkbox.isChecked() else "false",
-            "annotated_folder": os.path.join(self.selected_folder, "annotated") if self.selected_folder and self.save_annotated_checkbox.isChecked() else None,
-            "last_folder_path": self.selected_folder
-        }
+            self.add_log_message(f"Opened output folder: {output_folder}")
+        else:
+            QMessageBox.information(self, "No Results", "No output folder found. Please process images first.")
     
     def get_full_model_path(self):
-        """Get the full path to the currently selected model"""
-        current_model_name = self.model_combo.currentText()
-        print(f"🔍 [DEBUG] get_full_model_path() called with: {current_model_name}")
-        
-        # If it's already a full path, return it
-        if os.path.isabs(current_model_name) or current_model_name.startswith("C:"):
-            print(f"🔍 [DEBUG] Custom model path detected: {current_model_name}")
-            if os.path.exists(current_model_name):
-                print(f"🔍 [DEBUG] Custom model exists, returning: {current_model_name}")
-                return current_model_name
+        """Get the full path to the selected model"""
+        if self.selected_model:
+            if os.path.isabs(self.selected_model):
+                return self.selected_model
             else:
-                print(f"🔍 [DEBUG] Custom model NOT found: {current_model_name}")
-                return current_model_name  # Return as is for error handling
-        
-        # Otherwise, construct the path to the model folder
-        model_folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "model")
-        model_path = os.path.join(model_folder, f"{current_model_name}.pt")
-        print(f"🔍 [DEBUG] Constructed built-in model path: {model_path}")
-        
-        # Check if the model exists
-        if os.path.exists(model_path):
-            print(f"🔍 [DEBUG] Built-in model exists, returning: {model_path}")
-            return model_path
-        else:
-            print(f"🔍 [DEBUG] Built-in model NOT found: {model_path}")
-            # Return the model name as fallback
-            return current_model_name
+                # Construct relative path
+                script_dir = os.path.dirname(os.path.abspath(__file__))
+                parent_dir = os.path.dirname(script_dir)
+                model_folder = os.path.join(parent_dir, "model")
+                return os.path.join(model_folder, f"{self.selected_model}.pt")
+        return ""
+    
+    def on_model_combo_changed(self, text):
+        """Handle model combo box change"""
+        if text and text != self.selected_model:
+            self.selected_model = text
+            if hasattr(self, 'file_panel'):
+                self.file_panel.model_input.setText(text)
+            self.status_panel.model_info.setText(f"AI Model : {os.path.basename(text)}")
+            self.add_log_message(f"Model changed to: {text}")
+    
+    def refresh_status(self):
+        """Refresh the status display"""
+        try:
+            # Refresh folder count if folder is selected
+            if self.selected_folder and os.path.exists(self.selected_folder):
+                image_extensions = ['.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif']
+                files = [f for f in os.listdir(self.selected_folder) 
+                        if os.path.isfile(os.path.join(self.selected_folder, f)) and 
+                        any(f.lower().endswith(ext) for ext in image_extensions)]
+                
+                self.total_files = len(files)
+                self.status_panel.log_count.setText(f"Total Files : {self.total_files}")
+                self.status_panel.selected_folder.setText(f"Select Folder : {os.path.basename(self.selected_folder)}")
+            
+            # Refresh model info
+            if self.selected_model:
+                self.status_panel.model_info.setText(f"AI Model : {os.path.basename(self.selected_model)}")
+            
+            # Update process status
+            if hasattr(self, 'processing_thread') and self.processing_thread and self.processing_thread.isRunning():
+                self.status_panel.process_status.setText("Process Status : Processing")
+            else:
+                self.status_panel.process_status.setText("Process Status : Standby")
+            
+            self.add_log_message("Status refreshed")
+            
+        except Exception as e:
+            self.add_log_message(f"❌ Error refreshing status: {str(e)}")
 
-    def save_log(self):
-        """Save the current activity log to a text file."""
-        folder_path = self.selected_folder if self.selected_folder else "output"
-        os.makedirs(folder_path, exist_ok=True)
-        log_file_path = os.path.join(folder_path, "activity_log.txt")
+    def update_config_table(self):
+        """Update the configuration table with current values"""
+        if hasattr(self, 'config_table'):
+            # Update table with current config values
+            current_config = self.get_current_config()
+            
+            for row in range(self.config_table.rowCount()):
+                param = self.config_table.item(row, 0).text()
+                if param == "Image Size":
+                    self.config_table.setItem(row, 1, QTableWidgetItem(current_config.get("imgsz", "12800")))
+                elif param == "Confidence":
+                    self.config_table.setItem(row, 1, QTableWidgetItem(current_config.get("conf", "0.2")))
+                elif param == "IOU Threshold":
+                    self.config_table.setItem(row, 1, QTableWidgetItem(current_config.get("iou", "0.2")))
+                elif param == "Max Detection":
+                    self.config_table.setItem(row, 1, QTableWidgetItem(current_config.get("max_det", "10000")))
+                elif param == "Line Width":
+                    self.config_table.setItem(row, 1, QTableWidgetItem(current_config.get("line_width", "3")))
+                elif param == "Convert KML":
+                    self.config_table.setItem(row, 1, QTableWidgetItem(current_config.get("convert_kml", "false")))
+                elif param == "Convert SHP":
+                    self.config_table.setItem(row, 1, QTableWidgetItem(current_config.get("convert_shp", "true")))
+                elif param == "Show Labels":
+                    self.config_table.setItem(row, 1, QTableWidgetItem(current_config.get("show_labels", "true")))
+                elif param == "Show Confidence":
+                    self.config_table.setItem(row, 1, QTableWidgetItem(current_config.get("show_conf", "false")))
+    
+    def sync_config_with_ui(self):
+        """Synchronize configuration with UI elements"""
+        # Update file panel options based on config
+        if hasattr(self, 'file_panel') and hasattr(self, 'config'):
+            self.file_panel.save_annotated.setChecked(self.config.get("save_annotated", "true") == "true")
+            self.file_panel.export_kml.setChecked(self.config.get("convert_kml", "false") == "true")
+            self.file_panel.export_shp.setChecked(self.config.get("convert_shp", "true") == "true")
         
-        with open(log_file_path, "w") as f:
-            f.write(self.activity_log.toPlainText())
-        
-        QMessageBox.information(self, "Log Saved", f"Activity log has been saved to:\n{log_file_path}")
-        print(f"Activity log saved to: {log_file_path}")
-
-    def toggle_progress_display(self):
-        """Toggle the visibility of the progress dialog."""
-        if self.progress_dialog.isHidden():
-            self.progress_dialog.show()
-            # Initialize log with header if it's empty
-            if not self.activity_log.toPlainText().strip():
-                self.activity_log.append("=== Digital Architect — PT Sawit Sumbernan Sarana - ACTIVITY LOG ===\n")
-                self.activity_log.append(f"Started at: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
-                self.activity_log.append("-" * 50 + "\n")
-        else:
-            self.progress_dialog.hide()
+        # Update configuration table
+        self.update_config_table()
