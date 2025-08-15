@@ -674,7 +674,7 @@ class MainWindow(QMainWindow):
             header_layout.addWidget(logo_label)
         
         # App title
-        title_label = QLabel("Pokok Kuning Detection System V 2.0.0")
+        title_label = QLabel("Digital Architect — PT Sawit Sumbernan Sarana v2.0.0")
         title_label.setStyleSheet("""
             QLabel {
                 color: white;
