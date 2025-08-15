@@ -109,8 +109,37 @@ class ImageProcessor:
                 multiprocessing.freeze_support()
             
             from ultralytics import YOLO
+            
+            # ✅ Add explicit device detection for both development and executable
+            import torch
+            device = "cpu"  # Default fallback
+            
+            if torch.cuda.is_available():
+                device = "cuda"
+                safe_print(f"  ✓ CUDA detected: {torch.cuda.get_device_name(0)}")
+                safe_print(f"  ✓ CUDA memory: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB")
+            else:
+                safe_print(f"  ⚠️  CUDA not available, using CPU")
+                
+            # Set environment variables for better GPU detection in PyInstaller
+            if getattr(sys, 'frozen', False) and torch.cuda.is_available():
+                os.environ['CUDA_VISIBLE_DEVICES'] = '0'  # Ensure GPU 0 is visible
+                
+            safe_print(f"  Using device: {device}")
+            
+            # Load model with explicit device
             self.model = YOLO(model_path)
-            safe_print(f"  ✓ Model loaded successfully")
+            
+            # Move model to GPU if available
+            if device == "cuda":
+                try:
+                    self.model.to(device)
+                    safe_print(f"  ✓ Model moved to GPU successfully")
+                except Exception as e:
+                    safe_print(f"  ⚠️  Could not move model to GPU: {e}, using CPU")
+                    device = "cpu"
+            
+            safe_print(f"  ✓ Model loaded successfully on {device}")
         except Exception as e:
             error_msg = f"Failed to load model: {str(e)}"
             safe_print(f"  ✗ {error_msg}")
@@ -288,6 +317,9 @@ class ImageProcessor:
         """Object detection with error handling and optional annotation saving"""
         temp_image_path = None
         try:
+            # Import torch for device detection
+            import torch
+            
             safe_print(f"    Starting detection for: {os.path.basename(image_path)}")
             # Validate image first
             is_valid, width, height, mode, temp_path = self.validate_and_preprocess_image(image_path)
@@ -307,7 +339,9 @@ class ImageProcessor:
                 except (ValueError, TypeError):
                     pass
                 
-            safe_print(f"    Running YOLO prediction (imgsz={imgsz}, conf={conf}, iou={iou})...")
+            # Get device for inference
+            inference_device = "cuda" if torch.cuda.is_available() else "cpu"
+            safe_print(f"    Running YOLO prediction (imgsz={imgsz}, conf={conf}, iou={iou}, device={inference_device})...")
             
             results = self.model.predict(
                 source=processing_path, 
@@ -316,6 +350,7 @@ class ImageProcessor:
                 iou=iou, 
                 classes=classes, 
                 max_det=max_det,
+                device=inference_device,  # Explicitly set device for inference
                 verbose=False,  # Reduce console output
                 save=False  # We'll handle saving annotated images ourselves
             )

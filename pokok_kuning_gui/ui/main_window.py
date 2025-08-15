@@ -12,9 +12,57 @@ import os
 import sys
 import time
 import json
+import platform
+import psutil
 
 from utils.config_manager import load_config, save_config, get_model_names
 from core.processor import ImageProcessor
+
+def get_system_specs():
+    """Get detailed system specifications"""
+    specs = {}
+    
+    try:
+        # Basic system info
+        specs['os'] = f"{platform.system()} {platform.release()}"
+        specs['processor'] = platform.processor() or "Unknown"
+        specs['architecture'] = platform.architecture()[0]
+        
+        # Memory info
+        memory = psutil.virtual_memory()
+        specs['total_ram'] = f"{memory.total / (1024**3):.1f} GB"
+        specs['available_ram'] = f"{memory.available / (1024**3):.1f} GB"
+        specs['ram_usage'] = f"{memory.percent:.1f}%"
+        
+        # CPU info
+        specs['cpu_cores'] = psutil.cpu_count(logical=False)
+        specs['cpu_threads'] = psutil.cpu_count(logical=True)
+        specs['cpu_freq'] = f"{psutil.cpu_freq().current:.0f} MHz" if psutil.cpu_freq() else "Unknown"
+        
+        # GPU info
+        try:
+            import torch
+            if torch.cuda.is_available():
+                specs['gpu'] = torch.cuda.get_device_name(0)
+                specs['gpu_memory'] = f"{torch.cuda.get_device_properties(0).total_memory / (1024**3):.1f} GB"
+                specs['cuda_version'] = torch.version.cuda
+            else:
+                specs['gpu'] = "No CUDA GPU detected"
+                specs['gpu_memory'] = "N/A"
+                specs['cuda_version'] = "N/A"
+        except ImportError:
+            specs['gpu'] = "PyTorch not available"
+            specs['gpu_memory'] = "N/A"
+            specs['cuda_version'] = "N/A"
+            
+        # Python info
+        specs['python_version'] = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+        
+    except Exception as e:
+        print(f"Error getting system specs: {e}")
+        
+    return specs
+
 
 class StatusPanel(QFrame):
     """Status panel widget showing connection and system status"""
@@ -77,34 +125,71 @@ class StatusPanel(QFrame):
         middle_panel.addWidget(self.model_info)
         status_layout.addLayout(middle_panel)
         
-        # Right side - Refresh button
+        # Right side - System specifications
         right_panel = QVBoxLayout()
         right_panel.setSpacing(4)
         
-        self.refresh_btn = QPushButton("Refresh")
-        self.refresh_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #007bff;
-                color: white;
-                border: none;
-                border-radius: 4px;
-                padding: 6px 12px;
-                font-weight: 500;
-                font-size: 11px;
-                min-width: 60px;
-                min-height: 26px;
-            }
-            QPushButton:hover {
-                background-color: #0056b3;
-            }
-        """)
-        self.refresh_btn.clicked.connect(self.refresh_status)
+        # Get system specs
+        specs = get_system_specs()
         
-        right_panel.addWidget(self.refresh_btn)
-        right_panel.addStretch()
+        # GPU info (most important)
+        gpu = specs.get('gpu', 'Unknown')
+        if len(gpu) > 35:  # Truncate long GPU names
+            gpu = gpu[:35] + "..."
+        gpu_memory = specs.get('gpu_memory', 'Unknown')
+        self.gpu_info = QLabel(f"GPU : {gpu}")
+        # Color code GPU status
+        if "No CUDA" in specs.get('gpu', '') or "not available" in specs.get('gpu', ''):
+            self.gpu_info.setStyleSheet("color: #dc3545; font-weight: 500; font-size: 11px;")  # Red for no GPU
+        else:
+            self.gpu_info.setStyleSheet("color: #28a745; font-weight: 500; font-size: 11px;")  # Green for GPU available
+        
+        # Memory info
+        total_ram = specs.get('total_ram', 'Unknown')
+        self.memory_info = QLabel(f"Memory : {total_ram}")
+        self.memory_info.setStyleSheet("color: #495057; font-size: 11px;")
+        
+        # CPU cores
+        cores = specs.get('cpu_cores', 'Unknown')
+        threads = specs.get('cpu_threads', 'Unknown')
+        self.cpu_info = QLabel(f"CPU : {cores}C/{threads}T")
+        self.cpu_info.setStyleSheet("color: #495057; font-size: 11px;")
+        
+        right_panel.addWidget(self.gpu_info)
+        right_panel.addWidget(self.memory_info)
+        right_panel.addWidget(self.cpu_info)
         status_layout.addLayout(right_panel)
         
         layout.addLayout(status_layout)
+    
+    def refresh_system_specs(self):
+        """Refresh system specifications display"""
+        try:
+            specs = get_system_specs()
+            
+            # Update GPU info
+            gpu = specs.get('gpu', 'Unknown')
+            if len(gpu) > 35:
+                gpu = gpu[:35] + "..."
+            self.gpu_info.setText(f"GPU : {gpu}")
+            
+            # Update GPU color based on availability
+            if "No CUDA" in specs.get('gpu', '') or "not available" in specs.get('gpu', ''):
+                self.gpu_info.setStyleSheet("color: #dc3545; font-weight: 500; font-size: 11px;")
+            else:
+                self.gpu_info.setStyleSheet("color: #28a745; font-weight: 500; font-size: 11px;")
+            
+            # Update memory info
+            total_ram = specs.get('total_ram', 'Unknown')
+            self.memory_info.setText(f"Memory : {total_ram}")
+            
+            # Update CPU info
+            cores = specs.get('cpu_cores', 'Unknown')
+            threads = specs.get('cpu_threads', 'Unknown')
+            self.cpu_info.setText(f"CPU : {cores}C/{threads}T")
+            
+        except Exception as e:
+            print(f"Error refreshing system specs: {e}")
     
     def refresh_status(self):
         """Refresh the status display"""
@@ -606,10 +691,8 @@ class MainWindow(QMainWindow):
         # Create header
         self.create_header(main_layout)
         
-        # Create status panel
+        # Create status panel with system specs
         self.status_panel = StatusPanel()
-        # Connect refresh button to refresh function
-        self.status_panel.refresh_btn.clicked.connect(self.refresh_status)
         main_layout.addWidget(self.status_panel)
         
         # Create configuration table section
@@ -1270,6 +1353,9 @@ Results saved to output folder."""
                 self.status_panel.process_status.setText("Process Status : Processing")
             else:
                 self.status_panel.process_status.setText("Process Status : Standby")
+            
+            # Refresh system specifications
+            self.status_panel.refresh_system_specs()
             
             self.add_log_message("Status refreshed")
             
