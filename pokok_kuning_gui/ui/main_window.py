@@ -250,6 +250,7 @@ class ConfigurationTable(QTableWidget):
             ["IOU Threshold", "0.2", "Float", "Intersection over Union threshold"],
             ["Max Detection", "10000", "Integer", "Maximum detections per image"],
             ["Line Width", "3", "Integer", "Annotation line width"],
+            ["Device", "auto", "String", "Processing device: auto, cpu, or cuda"],
             ["Convert KML", "false", "Boolean", "Export to KML format"],
             ["Convert SHP", "true", "Boolean", "Export to Shapefile format"],
             ["Show Labels", "true", "Boolean", "Display class labels"],
@@ -387,6 +388,65 @@ class FileManagementPanel(QFrame):
         model_layout.addWidget(browse_model_btn)
         layout.addLayout(model_layout)
         
+        # Device selection
+        device_layout = QHBoxLayout()
+        device_layout.setSpacing(8)
+        
+        device_label = QLabel("Device:")
+        device_label.setStyleSheet("font-size: 11px; color: #495057; min-width: 60px;")
+        
+        self.device_combo = QComboBox()
+        self.device_combo.addItems(["auto", "cpu", "cuda"])
+        self.device_combo.setCurrentText("auto")
+        self.device_combo.setStyleSheet("""
+            QComboBox {
+                border: 1px solid #ced4da;
+                border-radius: 4px;
+                padding: 6px 10px;
+                font-size: 11px;
+                background-color: white;
+                color: #495057;
+                min-width: 100px;
+            }
+            QComboBox::drop-down {
+                border: none;
+                width: 20px;
+            }
+            QComboBox::down-arrow {
+                width: 12px;
+                height: 12px;
+            }
+            QComboBox QAbstractItemView {
+                border: 1px solid #ced4da;
+                background-color: white;
+                selection-background-color: #e3f2fd;
+            }
+        """)
+        self.device_combo.currentTextChanged.connect(self.on_device_changed)
+        
+        device_info_btn = QPushButton("Info")
+        device_info_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #17a2b8;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 6px 12px;
+                font-weight: 500;
+                font-size: 11px;
+                min-width: 50px;
+            }
+            QPushButton:hover {
+                background-color: #138496;
+            }
+        """)
+        device_info_btn.clicked.connect(self.show_device_info)
+        
+        device_layout.addWidget(device_label)
+        device_layout.addWidget(self.device_combo, 1)
+        device_layout.addWidget(device_info_btn)
+        layout.addLayout(device_layout)
+        
         # File options
         options_layout = QHBoxLayout()
         options_layout.setSpacing(15)
@@ -511,6 +571,16 @@ class FileManagementPanel(QFrame):
         """Open settings dialog"""
         if self.parent:
             self.parent.save_settings()
+    
+    def on_device_changed(self, device):
+        """Handle device selection change"""
+        if self.parent:
+            self.parent.on_device_changed(device)
+    
+    def show_device_info(self):
+        """Show device information dialog"""
+        if self.parent:
+            self.parent.show_device_info()
     
     def reset_settings(self):
         """Reset settings to default"""
@@ -714,6 +784,9 @@ class MainWindow(QMainWindow):
         
         # Set initial model path
         self.set_initial_model_path()
+        
+        # Initialize selected device
+        self.selected_device = "auto"
         
         # Synchronize configuration with UI
         self.sync_config_with_ui()
@@ -1125,6 +1198,8 @@ Results saved to output folder."""
                     config["max_det"] = value
                 elif param == "Line Width":
                     config["line_width"] = value
+                elif param == "Device":
+                    config["device"] = value.lower()
                 elif param == "Convert KML":
                     config["convert_kml"] = value.lower()
                 elif param == "Convert SHP":
@@ -1141,6 +1216,7 @@ Results saved to output folder."""
             "conf": "0.2",
             "max_det": "10000",
             "line_width": "3",
+            "device": self.selected_device,
             "show_labels": "true",
             "show_conf": "false",
             "status_blok": "Full Blok",
@@ -1153,7 +1229,7 @@ Results saved to output folder."""
         
         # Ensure required keys are present
         required_keys = ["model", "imgsz", "iou", "conf", "convert_shp", "convert_kml", 
-                        "max_det", "line_width", "show_labels", "show_conf", 
+                        "max_det", "line_width", "device", "show_labels", "show_conf", 
                         "status_blok", "save_annotated"]
         
         for key in required_keys:
@@ -1166,6 +1242,8 @@ Results saved to output folder."""
                     config[key] = "true"
                 elif key == "convert_kml":
                     config[key] = "false"
+                elif key == "device":
+                    config[key] = self.selected_device
                 elif key == "status_blok":
                     config[key] = "Full Blok"
                 else:
@@ -1330,6 +1408,77 @@ Results saved to output folder."""
             self.status_panel.model_info.setText(f"AI Model : {os.path.basename(text)}")
             self.add_log_message(f"Model changed to: {text}")
     
+    def on_device_changed(self, device):
+        """Handle device selection change"""
+        self.selected_device = device
+        self.add_log_message(f"Device changed to: {device}")
+        
+        # Update GPU info in status panel based on selection
+        if hasattr(self, 'status_panel'):
+            self.status_panel.refresh_system_specs()
+    
+    def show_device_info(self):
+        """Show device information dialog"""
+        try:
+            import torch
+            
+            info_text = "=== Device Information ===\n\n"
+            
+            # Current selection
+            info_text += f"Selected Device: {self.selected_device}\n\n"
+            
+            # PyTorch info
+            info_text += f"PyTorch Version: {torch.__version__}\n"
+            info_text += f"CUDA Available: {torch.cuda.is_available()}\n"
+            
+            if torch.cuda.is_available():
+                info_text += f"CUDA Version: {torch.version.cuda}\n"
+                info_text += f"GPU Count: {torch.cuda.device_count()}\n"
+                
+                for i in range(torch.cuda.device_count()):
+                    props = torch.cuda.get_device_properties(i)
+                    info_text += f"\nGPU {i}: {props.name}\n"
+                    info_text += f"  Memory: {props.total_memory / (1024**3):.1f} GB\n"
+                    info_text += f"  Compute Capability: {props.major}.{props.minor}\n"
+            else:
+                info_text += "\nNo CUDA GPUs detected.\n"
+                info_text += "Possible reasons:\n"
+                info_text += "- NVIDIA GPU drivers not installed\n"
+                info_text += "- CUDA toolkit not installed\n"
+                info_text += "- PyTorch CPU-only version installed\n"
+            
+            # Show system specs
+            specs = get_system_specs()
+            info_text += f"\n=== System Specifications ===\n"
+            info_text += f"OS: {specs.get('os', 'Unknown')}\n"
+            info_text += f"CPU: {specs.get('processor', 'Unknown')}\n"
+            info_text += f"Memory: {specs.get('total_ram', 'Unknown')}\n"
+            
+            # Create message box
+            msg = QMessageBox(self)
+            msg.setWindowTitle("Device Information")
+            msg.setText(info_text)
+            msg.setTextFormat(Qt.PlainText)
+            msg.setIcon(QMessageBox.Information)
+            msg.setStandardButtons(QMessageBox.Ok)
+            
+            # Make it resizable
+            msg.setStyleSheet("""
+                QMessageBox {
+                    font-family: 'Consolas', 'Monaco', monospace;
+                    font-size: 11px;
+                }
+                QLabel {
+                    min-width: 500px;
+                    min-height: 300px;
+                }
+            """)
+            
+            msg.exec_()
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to get device information: {str(e)}")
+    
     def refresh_status(self):
         """Refresh the status display"""
         try:
@@ -1380,6 +1529,8 @@ Results saved to output folder."""
                     self.config_table.setItem(row, 1, QTableWidgetItem(current_config.get("max_det", "10000")))
                 elif param == "Line Width":
                     self.config_table.setItem(row, 1, QTableWidgetItem(current_config.get("line_width", "3")))
+                elif param == "Device":
+                    self.config_table.setItem(row, 1, QTableWidgetItem(current_config.get("device", "auto")))
                 elif param == "Convert KML":
                     self.config_table.setItem(row, 1, QTableWidgetItem(current_config.get("convert_kml", "false")))
                 elif param == "Convert SHP":

@@ -110,20 +110,62 @@ class ImageProcessor:
             
             from ultralytics import YOLO
             
-            # ✅ Add explicit device detection for both development and executable
+            # ✅ Add explicit device detection with user selection support
             import torch
-            device = "cpu"  # Default fallback
             
-            if torch.cuda.is_available():
-                device = "cuda"
-                safe_print(f"  ✓ CUDA detected: {torch.cuda.get_device_name(0)}")
-                safe_print(f"  ✓ CUDA memory: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB")
-            else:
-                safe_print(f"  ⚠️  CUDA not available, using CPU")
+            # Get device preference from config
+            device_preference = self.config.get("device", "auto").lower()
+            safe_print(f"  Device preference: {device_preference}")
+            
+            # Enhanced debugging for PyInstaller executable
+            if getattr(sys, 'frozen', False):
+                safe_print(f"  Running as PyInstaller executable")
+                safe_print(f"  PyTorch version: {torch.__version__}")
+                safe_print(f"  CUDA available: {torch.cuda.is_available()}")
+                if torch.cuda.is_available():
+                    safe_print(f"  CUDA device count: {torch.cuda.device_count()}")
+                    safe_print(f"  CUDA version: {torch.version.cuda}")
                 
-            # Set environment variables for better GPU detection in PyInstaller
-            if getattr(sys, 'frozen', False) and torch.cuda.is_available():
+                # Set environment variables for better GPU detection in PyInstaller
                 os.environ['CUDA_VISIBLE_DEVICES'] = '0'  # Ensure GPU 0 is visible
+                os.environ['CUDA_LAUNCH_BLOCKING'] = '1'  # Better error reporting
+            
+            # Device selection logic
+            if device_preference == "cpu":
+                device = "cpu"
+                safe_print(f"  ✓ Forced to use CPU (user selection)")
+            elif device_preference == "cuda":
+                if torch.cuda.is_available():
+                    device = "cuda"
+                    safe_print(f"  ✓ CUDA forced by user: {torch.cuda.get_device_name(0)}")
+                    safe_print(f"  ✓ CUDA memory: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB")
+                else:
+                    device = "cpu"
+                    safe_print(f"  ⚠️  CUDA requested but not available, falling back to CPU")
+                    # Additional debugging for why CUDA is not available
+                    if getattr(sys, 'frozen', False):
+                        try:
+                            cuda_path = os.environ.get('CUDA_PATH', 'Not set')
+                            safe_print(f"  Debug - CUDA_PATH: {cuda_path}")
+                            safe_print(f"  Debug - torch._C._cuda_getDeviceCount(): {torch._C._cuda_getDeviceCount()}")
+                        except Exception as debug_e:
+                            safe_print(f"  Debug error: {debug_e}")
+            else:  # auto
+                if torch.cuda.is_available():
+                    device = "cuda"
+                    safe_print(f"  ✓ Auto-detected CUDA: {torch.cuda.get_device_name(0)}")
+                    safe_print(f"  ✓ CUDA memory: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB")
+                else:
+                    device = "cpu"
+                    safe_print(f"  ⚠️  CUDA not available, using CPU")
+                    # Additional debugging for why CUDA is not available
+                    if getattr(sys, 'frozen', False):
+                        try:
+                            cuda_path = os.environ.get('CUDA_PATH', 'Not set')
+                            safe_print(f"  Debug - CUDA_PATH: {cuda_path}")
+                            safe_print(f"  Debug - torch._C._cuda_getDeviceCount(): {torch._C._cuda_getDeviceCount()}")
+                        except Exception as debug_e:
+                            safe_print(f"  Debug error: {debug_e}")
                 
             safe_print(f"  Using device: {device}")
             
@@ -339,8 +381,16 @@ class ImageProcessor:
                 except (ValueError, TypeError):
                     pass
                 
-            # Get device for inference
-            inference_device = "cuda" if torch.cuda.is_available() else "cpu"
+            # Get device for inference based on user preference
+            device_preference = self.config.get("device", "auto").lower() if hasattr(self, 'config') and self.config else "auto"
+            
+            if device_preference == "cpu":
+                inference_device = "cpu"
+            elif device_preference == "cuda":
+                inference_device = "cuda" if torch.cuda.is_available() else "cpu"
+            else:  # auto
+                inference_device = "cuda" if torch.cuda.is_available() else "cpu"
+                
             safe_print(f"    Running YOLO prediction (imgsz={imgsz}, conf={conf}, iou={iou}, device={inference_device})...")
             
             results = self.model.predict(

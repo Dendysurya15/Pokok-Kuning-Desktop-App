@@ -104,6 +104,19 @@ hiddenimports = [
     'PIL',
     'PIL.Image',
     'torch',
+    'torch.cuda',
+    'torch.cuda.comm',
+    'torch.cuda.nccl',
+    'torch.cuda.nvtx',
+    'torch.cuda.sparse',
+    'torch.cuda._utils',
+    'torch.cuda.streams',
+    'torch.cuda.memory',
+    'torch.cuda.profiler',
+    'torch._C._cuda_getDeviceCount',
+    'torch._C._cuda_init',
+    'torch._C._cuda_setDevice',
+    'torch.version',
     'torchvision',
     'geojson',
     'shapely',
@@ -116,12 +129,15 @@ hiddenimports = [
     'PyQt5.QtWidgets',
     'PyQt5.QtOpenGL',
     'PyQt5.QtSvg',
+    'psutil',
+    'platform',
 ]
 
 # Collect all packages
 import pkg_resources
 import site
 import ultralytics
+import glob
 
 # Get ultralytics package path
 ultralytics_path = ultralytics.__path__[0]
@@ -135,10 +151,49 @@ for site_dir in site.getsitepackages() + [site.getusersitepackages()]:
 
 # Additional data files
 if torch_site_packages:
+    # Add complete torch package
+    torch_path = os.path.join(torch_site_packages, 'torch')
+    torchvision_path = os.path.join(torch_site_packages, 'torchvision')
+    
     added_files.extend([
-        (os.path.join(torch_site_packages, 'torch'), 'torch'),
-        (os.path.join(torch_site_packages, 'torchvision'), 'torchvision'),
+        (torch_path, 'torch'),
+        (torchvision_path, 'torchvision'),
     ])
+    
+    # Add CUDA libraries if they exist
+    cuda_lib_paths = [
+        os.path.join(torch_site_packages, 'torch', 'lib'),
+        os.path.join(torch_site_packages, 'torch', 'bin'),
+    ]
+    
+    for cuda_lib_path in cuda_lib_paths:
+        if os.path.exists(cuda_lib_path):
+            added_files.append((cuda_lib_path, f'torch/{os.path.basename(cuda_lib_path)}'))
+    
+    # Look for NVIDIA CUDA toolkit libraries in common locations
+    common_cuda_paths = [
+        r'C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v*\\bin',
+        r'C:\\Program Files\\NVIDIA Corporation\\NVSMI',
+        os.path.join(torch_site_packages, 'nvidia'),
+    ]
+    
+    for pattern in common_cuda_paths:
+        if '*' in pattern:
+            # Use glob for wildcard patterns
+            for path in glob.glob(pattern):
+                if os.path.exists(path):
+                    added_files.append((path, f'nvidia/{os.path.basename(path)}'))
+        else:
+            if os.path.exists(pattern):
+                added_files.append((pattern, f'nvidia/{os.path.basename(pattern)}'))
+    
+    # Add specific CUDA DLLs and libraries
+    torch_lib_path = os.path.join(torch_site_packages, 'torch', 'lib')
+    if os.path.exists(torch_lib_path):
+        for file in os.listdir(torch_lib_path):
+            if file.endswith(('.dll', '.so', '.dylib')) and any(keyword in file.lower() for keyword in ['cuda', 'cublas', 'cufft', 'curand', 'cusolver', 'cusparse', 'cudnn', 'nvrtc', 'nvtx']):
+                full_path = os.path.join(torch_lib_path, file)
+                added_files.append((full_path, 'torch/lib'))
 
 # Add ultralytics data
 added_files.append((ultralytics_path, 'ultralytics'))
@@ -151,7 +206,7 @@ a = Analysis(
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
-    runtime_hooks=[],
+    runtime_hooks=['hook-torch.py'],
     excludes=['matplotlib', 'tkinter'],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
@@ -171,7 +226,7 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
-    console=False,  # Set to True for debugging, False for release
+    console=True,  # Set to True for debugging, False for release
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
