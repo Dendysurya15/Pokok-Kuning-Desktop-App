@@ -17,6 +17,11 @@ import psutil
 
 from utils.config_manager import load_config, save_config, get_model_names
 from core.processor import ImageProcessor
+from core.device_specs import (
+    get_cpu_info, get_memory_info, get_disk_info, get_gpu_info, 
+    get_network_info, get_battery_info, get_sensors_info, get_system_info,
+    get_size
+)
 
 def get_system_specs():
     """Get detailed system specifications"""
@@ -442,9 +447,29 @@ class FileManagementPanel(QFrame):
         """)
         device_info_btn.clicked.connect(self.show_device_info)
         
+        # Add Detailed Specs button
+        detailed_specs_btn = QPushButton("Detailed")
+        detailed_specs_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #28a745;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 6px 12px;
+                font-weight: 500;
+                font-size: 11px;
+                min-width: 60px;
+            }
+            QPushButton:hover {
+                background-color: #218838;
+            }
+        """)
+        detailed_specs_btn.clicked.connect(self.show_detailed_specs)
+        
         device_layout.addWidget(device_label)
         device_layout.addWidget(self.device_combo, 1)
         device_layout.addWidget(device_info_btn)
+        device_layout.addWidget(detailed_specs_btn)
         layout.addLayout(device_layout)
         
         # File options
@@ -581,6 +606,11 @@ class FileManagementPanel(QFrame):
         """Show device information dialog"""
         if self.parent:
             self.parent.show_device_info()
+    
+    def show_detailed_specs(self):
+        """Show detailed device specifications"""
+        if self.parent:
+            self.parent.show_comprehensive_device_specs()
     
     def reset_settings(self):
         """Reset settings to default"""
@@ -843,6 +873,31 @@ class MainWindow(QMainWindow):
         title_label.setMinimumWidth(300)
         header_layout.addWidget(title_label)
         header_layout.addStretch()
+        
+        # Device Specs button
+        device_specs_button = QPushButton("🔍 Device Specs")
+        device_specs_button.setStyleSheet("""
+            QPushButton {
+                background-color: rgba(255, 255, 255, 0.2);
+                color: white;
+                border: 1px solid rgba(255, 255, 255, 0.3);
+                border-radius: 4px;
+                padding: 8px 16px;
+                font-weight: 500;
+                font-size: 11px;
+                min-width: 110px;
+                min-height: 32px;
+            }
+            QPushButton:hover {
+                background-color: rgba(255, 255, 255, 0.3);
+                border-color: rgba(255, 255, 255, 0.5);
+            }
+            QPushButton:pressed {
+                background-color: rgba(255, 255, 255, 0.4);
+            }
+        """)
+        device_specs_button.clicked.connect(self.show_comprehensive_device_specs)
+        header_layout.addWidget(device_specs_button)
         
         # Show Log button
         show_log_button = QPushButton("Show Progress")
@@ -1418,7 +1473,7 @@ Results saved to output folder."""
             self.status_panel.refresh_system_specs()
     
     def show_device_info(self):
-        """Show device information dialog"""
+        """Show basic device information dialog"""
         try:
             import torch
             
@@ -1478,6 +1533,199 @@ Results saved to output folder."""
             
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to get device information: {str(e)}")
+    
+    def show_comprehensive_device_specs(self):
+        """Show comprehensive device specifications in a dedicated window"""
+        try:
+            # Create a new window for device specs
+            device_window = QWidget()
+            device_window.setWindowTitle("Comprehensive Device Specifications")
+            device_window.setGeometry(150, 150, 800, 600)
+            device_window.setWindowFlags(Qt.Window | Qt.WindowTitleHint | Qt.WindowCloseButtonHint | Qt.WindowMaximizeButtonHint)
+            
+            # Apply consistent styling
+            device_window.setStyleSheet("""
+                QWidget {
+                    background-color: #f8f9fa;
+                    font-family: 'Segoe UI', 'Tahoma', sans-serif;
+                    font-size: 11px;
+                    color: #495057;
+                }
+                QTextEdit {
+                    border: 1px solid #d1d9e6;
+                    border-radius: 4px;
+                    padding: 10px;
+                    font-family: 'Consolas', 'Monaco', monospace;
+                    font-size: 10px;
+                    background-color: white;
+                    line-height: 1.4;
+                }
+                QPushButton {
+                    background-color: #007bff;
+                    color: white;
+                    border: none;
+                    border-radius: 4px;
+                    padding: 8px 16px;
+                    font-weight: 500;
+                    font-size: 11px;
+                    min-width: 80px;
+                }
+                QPushButton:hover {
+                    background-color: #0056b3;
+                }
+                QLabel {
+                    font-weight: 600;
+                    color: #495057;
+                    font-size: 14px;
+                    margin-bottom: 10px;
+                }
+            """)
+            
+            layout = QVBoxLayout(device_window)
+            layout.setContentsMargins(15, 15, 15, 15)
+            layout.setSpacing(15)
+            
+            # Title
+            title = QLabel("🔍 Comprehensive Device Specifications")
+            title.setStyleSheet("font-size: 16px; font-weight: 600; color: #495057; margin-bottom: 10px;")
+            layout.addWidget(title)
+            
+            # Text area for specs
+            specs_text = QTextEdit()
+            specs_text.setReadOnly(True)
+            layout.addWidget(specs_text)
+            
+            # Button layout
+            button_layout = QHBoxLayout()
+            
+            refresh_btn = QPushButton("🔄 Refresh")
+            refresh_btn.clicked.connect(lambda: self.populate_device_specs(specs_text))
+            
+            export_btn = QPushButton("📄 Export")
+            export_btn.clicked.connect(lambda: self.export_device_specs(specs_text.toPlainText()))
+            
+            close_btn = QPushButton("❌ Close")
+            close_btn.clicked.connect(device_window.close)
+            close_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #dc3545;
+                    color: white;
+                    border: none;
+                    border-radius: 4px;
+                    padding: 8px 16px;
+                    font-weight: 500;
+                    font-size: 11px;
+                    min-width: 80px;
+                }
+                QPushButton:hover {
+                    background-color: #c82333;
+                }
+            """)
+            
+            button_layout.addWidget(refresh_btn)
+            button_layout.addWidget(export_btn)
+            button_layout.addStretch()
+            button_layout.addWidget(close_btn)
+            layout.addLayout(button_layout)
+            
+            # Populate initial specs
+            self.populate_device_specs(specs_text)
+            
+            # Show the window
+            device_window.show()
+            
+            # Keep reference to prevent garbage collection
+            self.device_window = device_window
+            
+            self.add_log_message("Opened comprehensive device specifications window")
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to open device specifications: {str(e)}")
+            self.add_log_message(f"❌ Failed to open device specs: {str(e)}")
+    
+    def populate_device_specs(self, text_widget):
+        """Populate the device specs text widget with comprehensive information"""
+        import io
+        import contextlib
+        from datetime import datetime
+        
+        try:
+            # Capture output from device specs functions
+            output = io.StringIO()
+            
+            with contextlib.redirect_stdout(output):
+                print("🔍 COMPREHENSIVE DEVICE SPECIFICATIONS 🔍")
+                print("="*80)
+                print(f"Scan Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+                print("="*80)
+                print()
+                
+                # Call all device spec functions
+                try:
+                    get_system_info()
+                    print()
+                    get_cpu_info()
+                    print()
+                    get_memory_info()
+                    print()
+                    get_disk_info()
+                    print()
+                    get_gpu_info()
+                    print()
+                    get_network_info()
+                    print()
+                    get_battery_info()
+                    print()
+                    get_sensors_info()
+                    print()
+                except Exception as e:
+                    print(f"Error collecting some specifications: {e}")
+                
+                print("="*80)
+                print("✅ Device specification scan completed!")
+                print("="*80)
+            
+            # Set the text content
+            text_widget.setPlainText(output.getvalue())
+            
+            # Auto-scroll to top
+            text_widget.verticalScrollBar().setValue(0)
+            
+        except Exception as e:
+            error_msg = f"Error gathering device specifications: {str(e)}\n\n"
+            error_msg += "This might be due to missing dependencies.\n"
+            error_msg += "Try running: pip install psutil GPUtil py-cpuinfo"
+            text_widget.setPlainText(error_msg)
+    
+    def export_device_specs(self, specs_text):
+        """Export device specifications to a text file"""
+        try:
+            from datetime import datetime
+            
+            # Create output directory if it doesn't exist
+            output_dir = "output"
+            os.makedirs(output_dir, exist_ok=True)
+            
+            # Generate filename with timestamp
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"device_specifications_{timestamp}.txt"
+            filepath = os.path.join(output_dir, filename)
+            
+            # Write specifications to file
+            with open(filepath, 'w', encoding='utf-8') as f:
+                f.write(specs_text)
+            
+            QMessageBox.information(
+                self, 
+                "Export Successful", 
+                f"Device specifications exported to:\n{os.path.abspath(filepath)}"
+            )
+            
+            self.add_log_message(f"Device specifications exported to: {filepath}")
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Export Error", f"Failed to export specifications: {str(e)}")
+            self.add_log_message(f"❌ Failed to export device specs: {str(e)}")
     
     def refresh_status(self):
         """Refresh the status display"""
