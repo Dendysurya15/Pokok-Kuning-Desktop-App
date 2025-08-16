@@ -243,10 +243,13 @@ a = Analysis(
 
 # Remove duplicates but keep strategic copies
 unique_datas = {}
-for src, dst in a.datas:
-    key = (os.path.basename(src), dst)
-    if key not in unique_datas:
-        unique_datas[key] = (src, dst)
+for data_tuple in a.datas:
+    # Handle both (src, dst) and (src, dst, type) formats
+    if len(data_tuple) >= 2:
+        src, dst = data_tuple[0], data_tuple[1]
+        key = (os.path.basename(src), dst)
+        if key not in unique_datas:
+            unique_datas[key] = data_tuple
 
 a.datas = list(unique_datas.values())
 
@@ -262,7 +265,7 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
-    console=True,  # Keep True for CUDA debugging
+    console=True,  # REQUIRED for CUDA stability
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
@@ -338,13 +341,17 @@ def setup_complete_cuda():
         if new_paths:
             os.environ['PATH'] = os.pathsep.join(new_paths) + os.pathsep + current_path
         
-        # Set comprehensive CUDA environment variables
+        # Set comprehensive CUDA environment variables for executable stability
         cuda_env_vars = {
             'CUDA_PATH': base_dir,
             'CUDA_HOME': base_dir,
             'CUDA_ROOT': base_dir,
             'CUDA_CACHE_DISABLE': '1',
-            'PYTORCH_CUDA_ALLOC_CONF': 'max_split_size_mb:512',
+            'PYTORCH_CUDA_ALLOC_CONF': 'max_split_size_mb:256,garbage_collection_threshold:0.7',
+            'CUDA_LAUNCH_BLOCKING': '1',  # Better error reporting
+            'CUDA_VISIBLE_DEVICES': '0',  # Ensure GPU 0 is visible
+            'PYTORCH_DISABLE_CUDA_MEMORY_POOL': '0',  # Use memory pool
+            'CUDA_MODULE_LOADING': 'LAZY',  # Lazy loading for stability
         }
         
         for var, value in cuda_env_vars.items():

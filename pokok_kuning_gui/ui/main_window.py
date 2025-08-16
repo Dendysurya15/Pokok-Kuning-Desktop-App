@@ -665,17 +665,78 @@ class ProcessingThread(QThread):
     def run(self):
         print(f"Processing thread started for: {self.folder_path}")
         try:
+            # Enhanced error handling for CUDA stability in executable
+            if getattr(sys, 'frozen', False):
+                print("Running in PyInstaller executable mode - enabling enhanced error handling")
+                # Set additional environment variables for stability
+                import os
+                os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
+                os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'max_split_size_mb:256'
+                
+                # Force garbage collection before starting
+                import gc
+                gc.collect()
+                
+                # Test CUDA availability before processing
+                try:
+                    import torch
+                    if torch.cuda.is_available():
+                        # Create a small test tensor to verify CUDA is working
+                        test_tensor = torch.zeros(1, device='cuda')
+                        del test_tensor
+                        torch.cuda.synchronize()
+                        print("CUDA verification test passed")
+                    else:
+                        print("CUDA not available, using CPU mode")
+                except Exception as cuda_test_error:
+                    print(f"CUDA test failed: {cuda_test_error}")
+                    # Force CPU mode for safety
+                    if 'device' in self.config:
+                        self.config['device'] = 'cpu'
+                        print("Forced to CPU mode for stability")
+            
             start_time = time.time()
+            
+            # Run processing with enhanced error handling
             results = self.processor.process_folder(
                 self.folder_path, 
                 self.config,
                 progress_callback=self.progress_update.emit
             )
-            end_time = time.time()
             
+            end_time = time.time()
             results['total_time'] = end_time - start_time
             print("Processing thread finished successfully, emitting results...")
             self.processing_finished.emit(results)
+            
+        except RuntimeError as cuda_error:
+            # Specific handling for CUDA runtime errors
+            error_msg = str(cuda_error)
+            print(f"❌ CUDA Runtime Error: {error_msg}")
+            
+            if "cuda" in error_msg.lower() or "gpu" in error_msg.lower():
+                print("CUDA-related error detected - this is likely a GPU memory or compatibility issue")
+                error_results = {
+                    "error": f"CUDA Error: {error_msg}\n\nThis usually indicates:\n- Insufficient GPU memory\n- CUDA driver compatibility issue\n- Try using CPU mode instead",
+                    "successful_processed": 0,
+                    "failed_processed": 0,
+                    "total_files": 0,
+                    "total_time": 0,
+                    "total_abnormal": 0,
+                    "total_normal": 0
+                }
+            else:
+                error_results = {
+                    "error": f"Runtime Error: {error_msg}",
+                    "successful_processed": 0,
+                    "failed_processed": 0,
+                    "total_files": 0,
+                    "total_time": 0,
+                    "total_abnormal": 0,
+                    "total_normal": 0
+                }
+            
+            self.processing_finished.emit(error_results)
             
         except Exception as e:
             print(f"❌ Critical error in processing thread: {str(e)}")
@@ -684,7 +745,7 @@ class ProcessingThread(QThread):
             
             # Emit error result instead of crashing
             error_results = {
-                "error": f"Processing failed: {str(e)}",
+                "error": f"Processing failed: {str(e)}\n\nFull traceback:\n{traceback.format_exc()}",
                 "successful_processed": 0,
                 "failed_processed": 0,
                 "total_files": 0,

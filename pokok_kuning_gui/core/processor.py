@@ -169,19 +169,53 @@ class ImageProcessor:
                 
             safe_print(f"  Using device: {device}")
             
-            # Load model with explicit device
-            self.model = YOLO(model_path)
-            
-            # Move model to GPU if available
+            # Load model with device specification - safer approach
             if device == "cuda":
                 try:
+                    # Try to load model directly with CUDA device
+                    import torch
+                    torch.cuda.empty_cache()  # Clear CUDA cache first
+                    
+                    # Load model on CPU first for safety
+                    self.model = YOLO(model_path)
+                    
+                    # Test CUDA availability with a small tensor first
+                    test_tensor = torch.zeros(1, device='cuda')
+                    del test_tensor
+                    torch.cuda.synchronize()
+                    
+                    # Now try to move model to GPU with more error handling
                     self.model.to(device)
-                    safe_print(f"  ✓ Model moved to GPU successfully")
+                    
+                    # Verify the move was successful
+                    if hasattr(self.model.model, 'device'):
+                        actual_device = str(self.model.model.device)
+                        if 'cuda' in actual_device:
+                            safe_print(f"  ✓ Model successfully loaded on GPU: {actual_device}")
+                        else:
+                            safe_print(f"  ⚠️  Model on {actual_device}, expected CUDA")
+                            device = "cpu"
+                    else:
+                        safe_print(f"  ✓ Model moved to GPU successfully")
+                    
                 except Exception as e:
-                    safe_print(f"  ⚠️  Could not move model to GPU: {e}, using CPU")
+                    safe_print(f"  ⚠️  CUDA error during model loading: {e}")
+                    safe_print(f"  ⚠️  Falling back to CPU mode for safety")
                     device = "cpu"
+                    # Reload model safely on CPU
+                    try:
+                        self.model = YOLO(model_path)
+                        safe_print(f"  ✓ Model reloaded successfully on CPU")
+                    except Exception as reload_e:
+                        raise Exception(f"Failed to reload model on CPU: {reload_e}")
+            else:
+                # Load model on CPU
+                self.model = YOLO(model_path)
+                safe_print(f"  ✓ Model loaded successfully on CPU")
             
-            safe_print(f"  ✓ Model loaded successfully on {device}")
+            # Store the final device for inference
+            self.final_device = device
+            safe_print(f"  ✓ Final model device: {self.final_device}")
         except Exception as e:
             error_msg = f"Failed to load model: {str(e)}"
             safe_print(f"  ✗ {error_msg}")
@@ -381,29 +415,43 @@ class ImageProcessor:
                 except (ValueError, TypeError):
                     pass
                 
-            # Get device for inference based on user preference
-            device_preference = self.config.get("device", "auto").lower() if hasattr(self, 'config') and self.config else "auto"
+            # Use the device that was successfully set during model loading
+            inference_device = getattr(self, 'final_device', 'cpu')
             
-            if device_preference == "cpu":
-                inference_device = "cpu"
-            elif device_preference == "cuda":
-                inference_device = "cuda" if torch.cuda.is_available() else "cpu"
-            else:  # auto
-                inference_device = "cuda" if torch.cuda.is_available() else "cpu"
-                
             safe_print(f"    Running YOLO prediction (imgsz={imgsz}, conf={conf}, iou={iou}, device={inference_device})...")
             
-            results = self.model.predict(
-                source=processing_path, 
-                imgsz=imgsz, 
-                conf=conf, 
-                iou=iou, 
-                classes=classes, 
-                max_det=max_det,
-                device=inference_device,  # Explicitly set device for inference
-                verbose=False,  # Reduce console output
-                save=False  # We'll handle saving annotated images ourselves
-            )
+            try:
+                results = self.model.predict(
+                    source=processing_path, 
+                    imgsz=imgsz, 
+                    conf=conf, 
+                    iou=iou, 
+                    classes=classes, 
+                    max_det=max_det,
+                    device=inference_device,  # Use the verified device
+                    verbose=False,  # Reduce console output
+                    save=False  # We'll handle saving annotated images ourselves
+                )
+            except Exception as pred_error:
+                safe_print(f"    ⚠️  Prediction failed on {inference_device}: {pred_error}")
+                if inference_device == "cuda":
+                    safe_print(f"    ⚠️  Retrying on CPU...")
+                    # Retry on CPU
+                    results = self.model.predict(
+                        source=processing_path, 
+                        imgsz=imgsz, 
+                        conf=conf, 
+                        iou=iou, 
+                        classes=classes, 
+                        max_det=max_det,
+                        device="cpu",
+                        verbose=False,
+                        save=False
+                    )
+                    safe_print(f"    ✓ Prediction completed on CPU (fallback)")
+                else:
+                    # If CPU also fails, re-raise the error
+                    raise pred_error
             
             safe_print(f"    YOLO prediction completed successfully")
             
