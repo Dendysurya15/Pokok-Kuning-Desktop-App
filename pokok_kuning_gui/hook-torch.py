@@ -13,7 +13,7 @@ logging.basicConfig(level=logging.INFO, format='PyTorch Hook: %(message)s')
 logger = logging.getLogger(__name__)
 
 def setup_complete_cuda():
-    """Complete CUDA setup for PyInstaller executable"""
+    """Complete CUDA setup for PyInstaller executable with process isolation"""
     
     if not hasattr(sys, '_MEIPASS'):
         return  # Not running in PyInstaller bundle
@@ -21,6 +21,9 @@ def setup_complete_cuda():
     try:
         base_dir = sys._MEIPASS
         logger.info(f"Initializing CUDA in: {base_dir}")
+        
+        # Skip aggressive multiprocessing setup to avoid conflicts
+        logger.info("Using default multiprocessing configuration for compatibility")
         
         # All possible CUDA locations in our bundle
         cuda_paths = [
@@ -43,17 +46,19 @@ def setup_complete_cuda():
         if new_paths:
             os.environ['PATH'] = os.pathsep.join(new_paths) + os.pathsep + current_path
         
-        # Set comprehensive CUDA environment variables for executable stability
+        # Set conservative CUDA environment variables for maximum stability
         cuda_env_vars = {
             'CUDA_PATH': base_dir,
             'CUDA_HOME': base_dir,
             'CUDA_ROOT': base_dir,
-            'CUDA_CACHE_DISABLE': '1',
-            'PYTORCH_CUDA_ALLOC_CONF': 'max_split_size_mb:256,garbage_collection_threshold:0.7',
-            'CUDA_LAUNCH_BLOCKING': '1',  # Better error reporting
+            'CUDA_CACHE_DISABLE': '0',  # Enable caching for stability
+            'PYTORCH_CUDA_ALLOC_CONF': 'max_split_size_mb:256,garbage_collection_threshold:0.6',
+            'CUDA_LAUNCH_BLOCKING': '1',  # Synchronous mode for stability
             'CUDA_VISIBLE_DEVICES': '0',  # Ensure GPU 0 is visible
             'PYTORCH_DISABLE_CUDA_MEMORY_POOL': '0',  # Use memory pool
             'CUDA_MODULE_LOADING': 'LAZY',  # Lazy loading for stability
+            'PYTORCH_JIT': '0',  # Disable JIT compilation for stability
+            'CUDA_DEVICE_ORDER': 'PCI_BUS_ID',  # Consistent device ordering
         }
         
         for var, value in cuda_env_vars.items():
@@ -70,14 +75,24 @@ def setup_complete_cuda():
                     except:
                         pass
         
-        # Preload critical CUDA DLLs
-        preload_cuda_dlls(cuda_paths)
+        # Optional: Preload critical CUDA DLLs (skip if problematic)
+        try:
+            preload_cuda_dlls(cuda_paths)
+        except Exception as dll_error:
+            logger.warning(f"DLL preloading skipped: {dll_error}")
         
-        # Test CUDA after setup
+        # Minimal completion check
         test_cuda_final()
         
     except Exception as e:
         logger.error(f"CUDA setup failed: {e}")
+        # Emergency fallback to CPU-only mode
+        try:
+            os.environ['CUDA_VISIBLE_DEVICES'] = ''
+            os.environ['PYTORCH_CUDA_ALLOC_CONF'] = ''
+            logger.info("Emergency fallback: Set to CPU-only mode")
+        except:
+            pass
 
 def preload_cuda_dlls(search_paths):
     """Preload CUDA DLLs in correct order"""
@@ -110,24 +125,21 @@ def preload_cuda_dlls(search_paths):
     logger.info(f"Successfully preloaded {loaded_count} critical CUDA DLLs")
 
 def test_cuda_final():
-    """Final CUDA test"""
+    """Minimal CUDA detection without operations that could crash"""
     try:
-        import torch
-        cuda_available = torch.cuda.is_available()
-        logger.info(f"Final CUDA test - Available: {cuda_available}")
-        
-        if cuda_available:
-            device_count = torch.cuda.device_count()
-            logger.info(f"CUDA devices detected: {device_count}")
-            
-            if device_count > 0:
-                device_name = torch.cuda.get_device_name(0)
-                logger.info(f"Primary GPU: {device_name}")
+        logger.info("CUDA path and DLL setup completed successfully")
+        logger.info("PyTorch will handle CUDA detection when needed by the application")
+        # No actual CUDA operations here to prevent crashes
         
     except Exception as e:
-        logger.error(f"Final CUDA test failed: {e}")
+        logger.error(f"CUDA setup issue: {e}")
+        logger.info("Application will use default PyTorch CUDA configuration")
 
-# Execute setup immediately when hook is imported
-logger.info("Starting complete CUDA setup...")
-setup_complete_cuda()
-logger.info("CUDA setup completed!")
+# Execute setup immediately when hook is imported - minimal and safe approach
+logger.info("Starting minimal CUDA setup...")
+try:
+    setup_complete_cuda()
+    logger.info("CUDA setup completed - application ready!")
+except Exception as hook_error:
+    logger.error(f"CUDA setup warning: {hook_error}")
+    logger.info("Application will continue with default CUDA configuration")

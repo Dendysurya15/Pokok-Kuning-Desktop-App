@@ -19,11 +19,14 @@ added_files = [
 if os.path.exists('README.md'):
     added_files.append(('README.md', '.'))
 
-# Complete hidden imports
+# Complete hidden imports with stability focus
 hiddenimports = [
     # Local modules
     'ui', 'ui.main_window', 'core', 'core.processor', 'core.cli',
     'utils', 'utils.config_manager',
+    
+    # Basic threading support only
+    'threading',
     
     # Ultralytics complete
     'ultralytics', 'ultralytics.models', 'ultralytics.models.yolo',
@@ -31,7 +34,7 @@ hiddenimports = [
     'ultralytics.utils', 'ultralytics.utils.plotting', 'ultralytics.utils.ops',
     'ultralytics.engine', 'ultralytics.engine.predictor', 'ultralytics.engine.results',
     'ultralytics.data', 'ultralytics.data.utils', 'ultralytics.nn', 'ultralytics.nn.modules',
-    'ultralytics.trackers',
+    'ultralytics.trackers', 'ultralytics.utils.torch_utils',
     
     # Computer Vision
     'cv2', 'numpy', 'PIL', 'PIL.Image', 'PIL.ImageTk', 'PIL.ImageDraw', 'PIL.ImageFont',
@@ -46,6 +49,9 @@ hiddenimports = [
     'torch.backends', 'torch.backends.cuda', 'torch.backends.cudnn',
     'torchvision', 'torchvision.transforms', 'torchvision.models',
     
+    # Memory management
+    'gc', 'ctypes', 'ctypes.wintypes',
+    
     # Geospatial
     'geojson', 'shapely', 'shapely.geometry', 'shapely.ops',
     'fastkml', 'fastkml.kml', 'geopandas', 'fiona', 'pyproj',
@@ -57,6 +63,7 @@ hiddenimports = [
     # Other essentials
     'tqdm', 'yaml', 'matplotlib', 'seaborn', 'pandas', 'scipy', 'sklearn',
     'pkg_resources', 'setuptools', 'wheel', 'psutil', 'logging',
+    'traceback', 'sys', 'os', 'pathlib', 'time',
 ]
 
 def get_conda_prefix():
@@ -216,10 +223,10 @@ exe = EXE(
     [],
     exclude_binaries=True,
     name='PokokKuningApp',
-    debug=False,
+    debug=True,  # Enable debugging for better error reporting
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    upx=False,  # Disable UPX compression for stability
     console=True,  # REQUIRED for CUDA stability
     disable_windowed_traceback=False,
     argv_emulation=False,
