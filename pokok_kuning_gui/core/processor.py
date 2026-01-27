@@ -274,17 +274,38 @@ class ImageProcessor:
                 geojson_output_path = self.save_geojson(feature_collection, image_path)
                 
                 if geojson_output_path is None:
+                    safe_print(f"    ✗ Failed to save GeoJSON")
                     failed_processed += 1
                     continue
                 
-                # Convert to other formats if requested
-                if config.get("convert_kml") == "true":
-                    kml_output_path = geojson_output_path.replace('.geojson', '.kml')
-                    self.convert_geojson_to_kml(geojson_output_path, kml_output_path)
+                safe_print(f"    ✓ GeoJSON saved: {os.path.basename(geojson_output_path)}")
                 
-                if config.get("convert_shp") == "true":
+                # Check export options
+                convert_kml = config.get("convert_kml", "false").lower() == "true"
+                convert_shp = config.get("convert_shp", "false").lower() == "true"
+                
+                safe_print(f"    Export options - KML: {convert_kml}, Shapefile: {convert_shp}")
+                
+                # Convert to other formats if requested
+                if convert_kml:
+                    kml_output_path = geojson_output_path.replace('.geojson', '.kml')
+                    safe_print(f"    Converting to KML: {os.path.basename(kml_output_path)}")
+                    success = self.convert_geojson_to_kml(geojson_output_path, kml_output_path)
+                    if success:
+                        safe_print(f"    ✓ KML exported successfully: {os.path.basename(kml_output_path)}")
+                    else:
+                        safe_print(f"    ✗ Failed to export KML: {os.path.basename(kml_output_path)}")
+                
+                if convert_shp:
                     shp_output_path = geojson_output_path.replace('.geojson', '.shp')
-                    self.convert_geojson_to_shp(geojson_output_path, shp_output_path)
+                    safe_print(f"    Converting to Shapefile: {os.path.basename(shp_output_path)}")
+                    success = self.convert_geojson_to_shp(geojson_output_path, shp_output_path)
+                    if success:
+                        safe_print(f"    ✓ Shapefile exported successfully: {os.path.basename(shp_output_path)}")
+                    else:
+                        safe_print(f"    ✗ Failed to export Shapefile: {os.path.basename(shp_output_path)}")
+                else:
+                    safe_print(f"    ⚠️  Shapefile export is DISABLED (convert_shp=false)")
                 
                 successful_processed += 1
                 
@@ -676,10 +697,13 @@ class ImageProcessor:
             counter += 1
         
         try:
+            feature_count = len(feature_collection.get('features', []))
             with open(output_path, "w") as f:
                 geojson.dump(feature_collection, f)
+            safe_print(f"      GeoJSON saved with {feature_count} features")
             return output_path
-        except Exception:
+        except Exception as e:
+            safe_print(f"      Error saving GeoJSON: {e}")
             return None
     
     def convert_geojson_to_kml(self, geojson_path, kml_path):
@@ -708,10 +732,68 @@ class ImageProcessor:
             return False
     
     def convert_geojson_to_shp(self, geojson_path, shp_path):
-        """Convert GeoJSON to SHP"""
+        """Convert GeoJSON to SHP with proper error handling"""
         try:
-            gdf = gpd.read_file(geojson_path)
-            gdf.to_file(shp_path, driver='ESRI Shapefile')
-            return True
-        except Exception:
+            # Validate GeoJSON file exists
+            if not os.path.exists(geojson_path):
+                safe_print(f"      Error: GeoJSON file not found: {geojson_path}")
+                return False
+            
+            # Check if GeoJSON file is empty
+            if os.path.getsize(geojson_path) == 0:
+                safe_print(f"      Warning: GeoJSON file is empty: {geojson_path}")
+                return False
+            
+            # Read GeoJSON file
+            try:
+                gdf = gpd.read_file(geojson_path)
+            except Exception as read_error:
+                safe_print(f"      Error reading GeoJSON: {read_error}")
+                return False
+            
+            # Check if GeoDataFrame is empty
+            if gdf.empty:
+                safe_print(f"      Warning: No features found in GeoJSON file")
+                return False
+            
+            # Validate geometries
+            if 'geometry' not in gdf.columns:
+                safe_print(f"      Error: No geometry column found in GeoJSON")
+                return False
+            
+            # Remove any invalid geometries
+            invalid_count = (~gdf.geometry.is_valid).sum()
+            if invalid_count > 0:
+                safe_print(f"      Warning: Found {invalid_count} invalid geometries, removing them...")
+                gdf = gdf[gdf.geometry.is_valid].copy()
+            
+            # Check if we still have features after removing invalid ones
+            if gdf.empty:
+                safe_print(f"      Warning: No valid features remaining after cleaning")
+                return False
+            
+            # Ensure output directory exists
+            shp_dir = os.path.dirname(shp_path)
+            if shp_dir and not os.path.exists(shp_dir):
+                os.makedirs(shp_dir, exist_ok=True)
+            
+            # Convert to shapefile
+            # Note: shp_path should be the base path without extension
+            # geopandas will create .shp, .shx, .dbf, .prj files
+            base_shp_path = os.path.splitext(shp_path)[0]
+            
+            try:
+                gdf.to_file(base_shp_path, driver='ESRI Shapefile')
+                safe_print(f"      ✓ Shapefile created: {base_shp_path}.shp ({len(gdf)} features)")
+                return True
+            except Exception as write_error:
+                safe_print(f"      Error writing Shapefile: {write_error}")
+                import traceback
+                safe_print(f"      Traceback: {traceback.format_exc()}")
+                return False
+                
+        except Exception as e:
+            safe_print(f"      Error converting GeoJSON to Shapefile: {e}")
+            import traceback
+            safe_print(f"      Traceback: {traceback.format_exc()}")
             return False
