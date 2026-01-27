@@ -30,9 +30,6 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ],
-    "externalBin": [
-      "../pokok_kuning_gui/dist/pokok_kuning_new/pokok_kuning_new"
     ]
   }
 }
