@@ -1,247 +1,278 @@
 ---
 name: Palm Counting DDD + Tauri UI
-overview: Rebuild Palm Counting AI dengan arsitektur DDD di `Palm counting AI/python_ai`, pindahkan logika dari `pokok_kuning_gui`, dan buat UI modern pakai Tauri + React + shadcn. Integrasi Tauri–Python via sidecar/subprocess.
-todos: []
+overview: Rebuild Palm Counting AI dengan arsitektur **hybrid** – Python minimal hanya untuk YOLO (.pt) inference; Rust untuk UI, config, geo export, specs, CLI, orchestration. Tauri + React + shadcn di frontend.
+todos:
+  - id: infer-worker
+    content: Buat Python inference worker (stdin/stdout JSON), load .pt once, infer per image
+    status: pending
+  - id: rust-geo
+    content: Rust – baca .tfw, GeoJSON/KML/SHP export, gambar annotated (image/opencv)
+    status: pending
+  - id: rust-config-specs
+    content: Rust – config SQLite, specs sysinfo/nvidia-smi, list_models, CLI
+    status: pending
+  - id: tauri-commands
+    content: Tauri commands – select_folder, select_model, list_models, get_specs, config, run_processing
+    status: pending
+  - id: frontend-shadcn
+    content: Frontend React + Tailwind + shadcn, halaman utama (StatusCard, FolderPicker, Run, Progress, Log)
+    status: pending
+  - id: integration-test
+    content: Integrasi end-to-end, test run processing, deploy
+    status: pending
 isProject: false
 ---
 
-# Palm Counting AI – Rebuild dengan DDD + Tauri + shadcn
+# Palm Counting AI – Rebuild Hybrid (Rust + Python Minimal)
 
-## 1. Target struktur folder
+## 1. Arsitektur hybrid
+
+- **Python:** Hanya YOLO. Load `.pt` sekali, terima request per gambar lewat stdin (JSON), return detections (JSON) ke stdout. Subprocess **long-lived**.
+- **Rust:** UI (Tauri), config, geo export, .tfw, annotated images, specs, CLI, orchestration. Rust spawn Python inference worker, kirim path gambar + config, terima detections, lakukan sisanya.
+```mermaid
+flowchart TB
+  subgraph UI
+    FolderPicker
+    ModelSelect
+    RunButton
+    ProgressSection
+    LogViewer
+    StatusCard
+  end
+
+  subgraph Rust
+    Commands[Tauri Commands]
+    Config[Config SQLite]
+    Specs[sysinfo / nvidia-smi]
+    Geo[GeoJSON KML SHP]
+    Tfw[Read .tfw]
+    Annotate[Draw bbox save image]
+    Orchestrator[Run processing loop]
+  end
+
+  subgraph Python
+    InferWorker[Inference worker]
+    YOLO[YOLO .pt]
+  end
+
+  RunButton --> Commands
+  Commands --> Orchestrator
+  Orchestrator -->|stdin JSON| InferWorker
+  InferWorker --> YOLO
+  InferWorker -->|stdout JSON| Orchestrator
+  Orchestrator --> Tfw
+  Orchestrator --> Geo
+  Orchestrator --> Annotate
+  Commands --> Config
+  Commands --> Specs
+  Commands --> ProgressSection
+  Commands --> LogViewer
+  Commands --> StatusCard
+```
+
+
+---
+
+## 2. Target struktur folder
 
 ```
 Palm counting AI/
-├── python_ai/                    # Backend Python (DDD)
-│   ├── domain/
-│   ├── application/
-│   ├── infrastructure/
-│   ├── interfaces/
-│   ├── model/                    # YOLO .pt (symlink atau copy dari pokok_kuning_gui/model)
-│   └── requirements.txt
+├── python_ai/                    # Python minimal (inference only)
+│   ├── infer_worker.py           # stdin/stdout JSON, load .pt, predict
+│   ├── requirements.txt          # ultralytics, torch, Pillow; no PyQt5, no geopandas
+│   └── model/                    # .pt (symlink atau copy dari pokok_kuning_gui/model)
 ├── src/                          # Frontend Tauri (React + shadcn)
-├── src-tauri/                    # Rust backend, invoke Python
+├── src-tauri/
+│   └── src/
+│       ├── lib.rs                # Tauri commands
+│       ├── config.rs             # SQLite config
+│       ├── specs.rs              # sysinfo, nvidia-smi
+│       ├── geo.rs                # .tfw, GeoJSON, KML, SHP
+│       ├── annotate.rs           # draw bbox, save image
+│       └── infer.rs              # spawn Python worker, send/recv JSON
 └── ...
 ```
 
-**Sumber migrasi:** [pokok_kuning_gui/core/processor.py](pokok_kuning_gui/core/processor.py), [config_manager](pokok_kuning_gui/utils/config_manager.py), [device_specs](pokok_kuning_gui/core/device_specs.py), [cli](pokok_kuning_gui/core/cli.py).
+**Tidak ada** `python_ai` DDD (domain/application/infrastructure). Hanya satu script inference + `requirements.txt`.
 
 ---
 
-## 2. Arsitektur DDD – `python_ai`
+## 3. Python inference worker
 
-### 2.1 Domain layer
+### 3.1 Tanggung jawab
 
-- **Entities:** `DetectionResult` (counts, image path), `ProcessingConfig` (model, imgsz, conf, iou, device, export flags, dll).
-- **Value objects:** `JgwParams`, `GeoFeature` (point + props).
-- **Domain services:** tidak wajib di awal; logika inti di use case.
+- Baca JSON lines dari **stdin**. Setiap baris = satu request.
+- Request: `{"image": "/path/to.jpg", "model": "/path/model.pt", "imgsz": 1280, "conf": 0.2, "iou": 0.2, "device": "cuda"}`.
+- Load model `.pt` **sekali** saat pertama dapat `model` path (atau saat startup).
+- Untuk tiap request: `predict` → ambil boxes (x1,y1,x2,y2, class_id, conf) → tulis **satu** JSON line ke **stdout**.
+- Response: `{"detections": [{"x1", "y1", "x2", "y2", "class_id", "conf"}, ...], "error": null}`. Jika gagal: `{"detections": [], "error": "..."}`.
 
-### 2.2 Application layer (use cases)
+### 3.2 Flow
 
-- **ProcessFolderUseCase:** input folder + `ProcessingConfig`, output ringkasan (success/fail, total abnormal/normal). Memanggil infrastructure (model, file, export).
-- **LoadConfigUseCase / SaveConfigUseCase:** baca/tulis config (last used folder, model, imgsz, conf, iou, device, convert_kml/shp, save_annotated, dll).
-- **GetSystemSpecsUseCase:** CPU, RAM, GPU (torch+CUDA), disk. Ringkasan untuk UI status.
-- **ListModelsUseCase:** list `.pt` di `python_ai/model`.
+1. Rust spawn `python python_ai/infer_worker.py` (atau `python -m python_ai.infer_worker`).
+2. Rust kirim N request (satu per gambar); worker baca stdin, infer, tulis stdout.
+3. Rust baca stdout line-by-line, parse JSON, lanjut ke .tfw → geo → annotate.
 
-Progress per file: emit via callback (dan nantinya via stdout JSON lines untuk Tauri).
+### 3.3 Referensi
 
-### 2.3 Infrastructure layer
-
-- **YoloDetector:** load YOLO, `detect_objects`, `save_annotated_frame`. Wrap [processor](pokok_kuning_gui/core/processor.py) logic (detection, validation, device selection).
-- **GeoExporter:** `read_jgw`, `create_geojson`, `save_geojson`, `convert_geojson_to_kml`, `convert_geojson_to_shp`. Pakai geojson, shapely, fastkml, geopandas seperti saat ini.
-- **ConfigRepository:** SQLite `configuration` table. Migrasi dari [config_manager](pokok_kuning_gui/utils/config_manager.py) (schema sama).
-- **FileSystem:** resolve path model (dev vs frozen), list images, paths output.
-
-### 2.4 Interfaces layer
-
-- **CLI:** `python -m python_ai.interfaces.cli --folder ... --weights ...`. Mirip [cli](pokok_kuning_gui/core/cli.py), config dari CLI args. Stdout: log + JSON lines progress (satu JSON per baris) agar Tauri bisa parse.
-- **Stdio JSON API (opsional):** alternative ke CLI; baca JSON-RPC-like commands dari stdin, tulis hasil + progress ke stdout. Bisa fase kedua.
+- Logika detect dari [processor.py](pokok_kuning_gui/core/processor.py) `detect_objects` (tanpa geo, tanpa config DB). Hanya YOLO load + predict + format output.
 
 ---
 
-## 3. Fungsi Python yang perlu ada (ringkas)
+## 4. Rust – config, specs, geo, annotate
 
-| Fungsi | Layer | Keterangan |
+### 4.1 Config
 
-|--------|--------|------------|
+- **Storage:** SQLite (atau JSON file di app data). Schema mengikuti [config_manager](pokok_kuning_gui/utils/config_manager.py): `model`, `imgsz`, `iou`, `conf`, `device`, `convert_kml`, `convert_shp`, `save_annotated`, `last_folder_path`, `max_det`, `line_width`, `show_labels`, `show_conf`, dll.
+- **Crate:** `rusqlite`. Tauri commands `load_config`, `save_config` baca/tulis via Rust.
 
-| `ProcessFolderUseCase.execute(folder, config, progress_cb)` | Application | Orkestrasi process_folder |
+### 4.2 Specs
 
-| `LoadConfigUseCase.execute()` / `SaveConfigUseCase.execute(config)` | Application | Config load/save |
+- **CPU / RAM:** `sysinfo`.
+- **GPU:** Parse `nvidia-smi` atau pakai crate yang wrap. Tauri command `get_system_specs` return JSON untuk StatusCard.
 
-| `GetSystemSpecsUseCase.execute()` | Application | Specs untuk status UI |
+### 4.3 Geo
 
-| `ListModelsUseCase.execute()` | Application | List model .pt |
+- **.tfw:** Baca 6 float dari file. Pixel → map: `map_x = ulx + x * px_w`, `map_y = uly + y * py_h` (ikuti [processor](pokok_kuning_gui/core/processor.py) `image_to_map_coords`).
+- **GeoJSON:** Crate `geojson`. Dari detections (center bbox) + .tfw → FeatureCollection → write file.
+- **KML:** Crate atau tulis manual (format sederhana).
+- **Shapefile:** Crate `geozero`, `shapefile`, atau equivalent. GeoJSON → Shapefile jika `convert_shp` true.
 
-| `YoloDetector.detect(...)`, `save_annotated_frame(...)` | Infrastructure | YOLO + annotate |
+### 4.4 Annotated images
 
-| `GeoExporter.read_jgw`, `create_geojson`, `save_geojson`, `to_kml`, `to_shp` | Infrastructure | Geo export |
+- **Rust:** Load image (`image` crate atau `opencv`), gambar rectangle + label dari detections, simpan ke `folder/annotated/`. Pakai `line_width`, `show_labels`, `show_conf` dari config.
 
-| `ConfigRepository.get()` / `save(config)` | Infrastructure | SQLite |
+### 4.5 List models
 
-| CLI `main()` | Interfaces | Argparse + run use case, print JSON progress |
-
-Config fields tetap sama: `model`, `imgsz`, `iou`, `conf`, `device`, `convert_kml`, `convert_shp`, `save_annotated`, `last_folder_path`, `max_det`, `line_width`, `show_labels`, `show_conf`, dll.
+- **Rust:** List `.pt` di `python_ai/model` (atau path dari config). Tauri command `list_models` return list nama/custom path.
 
 ---
 
-## 4. UI (Tauri + React + shadcn)
+## 5. Tauri commands
 
-### 4.1 Stack
+| Command | Implementasi |
 
-- **Frontend:** React (ganti Preact) + TypeScript + Vite.
-- **Styling:** Tailwind v4 + shadcn/ui (init lewat `pnpm dlx shadcn@latest init`).
-- **Tauri:** [src-tauri](Palm counting AI/src-tauri/) tetap; tambah commands untuk Python.
+|--------|---------------|
 
-### 4.2 Halaman / layout
+| `select_folder` | Dialog pilih folder (`tauri-plugin-dialog` atau built-in). Return path. |
 
-- **Single-window layout:** Sidebar (opsional) + main content.
-- **Route:** Satu halaman utama (dashboard) cukup untuk MVP.
+| `select_model_file` | Dialog pilih file `.pt`. Return path. |
 
-### 4.3 Komponen UI yang perlu dibuat
+| `list_models` | Rust list dir `model/*.pt` (+ custom path dari config). |
 
-| Komponen | Deskripsi | shadcn dipakai |
+| `get_system_specs` | Rust `sysinfo` + GPU. Return JSON. |
 
-|----------|-----------|----------------|
+| `load_config` | Rust SQLite/JSON. Return config object. |
 
-| **Header** | Judul app, logo, maybe theme toggle | - |
+| `save_config` | Rust simpan ke SQLite/JSON. |
 
-| **StatusCard** | DB connected, system ready, folder dipilih, total files, process status, model, GPU/RAM/CPU | Card, Badge |
+| `run_processing` | Spawn Python worker, loop gambar: kirim JSON request → terima JSON response → .tfw → geo → annotate. Emit **progress** dan **log** ke frontend via Tauri events. |
 
-| **FolderPicker** | Input path folder + tombol Browse (buka native dialog via Tauri) | Input, Button |
+**Tidak ada** invoke Python untuk config, specs, atau list_models. Hanya `run_processing` yang pakai Python.
 
-| **ModelSelect** | Dropdown list model dari `ListModels` + opsi custom path (browse) | Select, Button |
+---
 
-| **DeviceSelect** | Dropdown: auto | cpu | cuda | Select |
+## 6. Contract JSON (Rust ↔ Python)
 
-| **ProcessingSettings** | imgsz, conf, iou, max_det, line_width; checkboxes convert_kml, convert_shp, save_annotated, show_labels, show_conf | Input, Checkbox, Slider (optional), Label |
+**Rust → Python (per gambar):**
 
-| **RunButton** | Start processing, disable saat running | Button |
-
-| **ProgressSection** | Progress bar (processed/total), current file, ETA, abnormal/normal counts | Progress, Card |
-
-| **LogViewer** | Scrollable log (append-only), clear, save to file | ScrollArea, Button |
-
-| **SettingsSheet/Dialog** | Form settings (atau inline); simpan ke config | Sheet/Dialog, Form |
-
-Alias `@/` ke `./src`, komponen shadcn di `src/components/ui/`.
-
-### 4.4 Alur data UI
-
-```mermaid
-flowchart LR
-  subgraph UI
-    FolderPicker --> RunButton
-    ModelSelect --> RunButton
-    DeviceSelect --> RunButton
-    ProcessingSettings --> RunButton
-    RunButton -->|invoke| Tauri
-    Tauri -->|progress events| ProgressSection
-    Tauri -->|log lines| LogViewer
-    Tauri -->|specs| StatusCard
-  end
-  subgraph Tauri
-    Commands[Commands] --> Sidecar[Python sidecar/subprocess]
-    Sidecar -->|JSON lines| Commands
-  end
+```json
+{"image": "C:/data/a1.jpg", "model": "C:/app/model/yolov8n-pokok-kuning.pt", "imgsz": 1280, "conf": 0.2, "iou": 0.2, "device": "cuda"}
 ```
 
----
+**Python → Rust:**
 
-## 5. Integrasi Tauri – Python
+```json
+{"detections": [{"x1": 100, "y1": 200, "x2": 150, "y2": 250, "class_id": 0, "conf": 0.92}], "error": null}
+```
 
-### 5.1 Opsi
-
-- **A) Sidecar:** Bundle Python embed atau pakai `python` di PATH. Tauri `Command` spawn sidecar, pass `--folder`, `--config-json`, dll. Python CLI emit progress JSON lines ke stdout; Rust baca dan forward ke frontend (e.g. event).
-- **B) Shell spawn:** Tanpa bundle Python. `std::process::Command` run `python -m python_ai.interfaces.cli ...`. Same stdout contract.
-
-Rekomendasi: **B** dulu (shell spawn). Sidecar bisa menyusul kalau mau distribusi tanpa dependency Python global.
-
-### 5.2 Tauri commands
-
-- **`select_folder()`** – dialog pilih folder, return path. Pakai `tauri-plugin-dialog` atau `tauri-plugin-shell` (open) sesuai kebutuhan; alternatif `@tauri-apps/plugin-dialog` if available.
-- **`select_model_file()`** – dialog pilih file `.pt`, return path.
-- **`list_models()`** – invoke Python `ListModelsUseCase` (script kecil atau CLI subcommand) atau implement di Rust dengan list dir `python_ai/model`.
-- **`get_system_specs()`** – invoke Python `GetSystemSpecsUseCase`, return JSON. Bisa script terpisah atau `python -m python_ai.interfaces.cli --specs-only` (perlu ditambah).
-- **`load_config()`** – invoke Python load config, return JSON.
-- **`save_config(config_json)`** – invoke Python save config.
-- **`run_processing(folder, config_json)`** – spawn `python -m python_ai.interfaces.cli ...`, stream stdout, parse JSON lines, emit progress + log ke frontend (e.g. `emit` ke window). Frontend dengar event dan update ProgressSection + LogViewer.
-
-### 5.3 Contract stdout CLI
-
-- Log human-readable: bebas.
-- Progress: satu JSON object per line, e.g. `{"type":"progress","processed":1,"total":10,"current_file":"a.jpg",...}`.
-- Final: `{"type":"done","successful":10,"failed":0,"total_abnormal":...,"total_normal":...}`.
-- Error: `{"type":"error","message":"..."}`.
-
-Rust baca line-by-line, parse JSON, emit ke frontend.
+Rust hitung center dari bbox, pakai .tfw → koordinat peta, buat GeoJSON/KML/SHP dan optional annotated image.
 
 ---
 
-## 6. Langkah implementasi (urutan)
+## 7. UI (Tauri + React + shadcn)
 
-1. **Setup `python_ai` DDD**
+### 7.1 Stack
 
-   - Buat struktur `domain/`, `application/`, `infrastructure/`, `interfaces/`.
-   - Pindah dan refactor logic dari `processor`, `config_manager`, `device_specs` ke layer yang sesuai.
-   - Implement CLI dengan stdout JSON progress; tambah `--specs-only`, `--list-models` jika pakai Python untuk specs/models.
+- **Frontend:** React + TypeScript + Vite. Ganti Preact → React.
+- **Styling:** Tailwind v4 + shadcn/ui (`pnpm dlx shadcn@latest init`).
+- **Tauri:** [src-tauri](Palm counting AI/src-tauri/); commands di atas.
 
-2. **Model & config**
+### 7.2 Komponen (unchanged)
 
-   - Copy atau symlink `model/*.pt` ke `python_ai/model`, atau tetap pakai `pokok_kuning_gui/model` dengan path yang bisa dikonfigurasi.
-   - Pastikan SQLite config path mengarah ke app data (mis. di bawah Tauri `app_data` atau project root) supaya konsisten.
+- **Header**, **StatusCard** (specs dari `get_system_specs`), **FolderPicker**, **ModelSelect**, **DeviceSelect**, **ProcessingSettings**, **RunButton**, **ProgressSection**, **LogViewer**, **SettingsSheet/Dialog**.
+- Alias `@/` → `./src`, shadcn di `src/components/ui/`.
 
-3. **Frontend: React + Tailwind + shadcn**
+### 7.3 Alur
 
-   - Ganti Preact → React di [package.json](Palm counting AI/package.json) dan [vite.config](Palm counting AI/vite.config.ts).
-   - Tambah Tailwind v4 + `@tailwindcss/vite`, konfigurasi `@/` di tsconfig dan Vite.
-   - `pnpm dlx shadcn@latest init` di `Palm counting AI`, lalu add component: `button`, `card`, `input`, `label`, `select`, `checkbox`, `progress`, `scroll-area`, `sheet` (atau `dialog`), `badge`.
-
-4. **Tauri commands**
-
-   - Implement `select_folder`, `select_model_file`, `list_models`, `get_system_specs`, `load_config`, `save_config`, `run_processing`.
-   - Untuk `run_processing`: spawn Python, stream stdout, parse JSON lines, emit events. Pasang `tauri-plugin-dialog` (atau等同) untuk file/folder picker jika belum.
-
-5. **Build halaman utama**
-
-   - Layout: Header + StatusCard + FolderPicker + ModelSelect + DeviceSelect + ProcessingSettings + RunButton + ProgressSection + LogViewer.
-   - Load config dan specs on mount; simpan config on save; hook Run ke `run_processing`, event progress/log ke state → UI.
-
-6. **Testing & bersih-bersih**
-
-   - Test CLI standalone (`python -m python_ai.interfaces.cli --folder ...`).
-   - Test Tauri dev: pilih folder, run, cek progress dan log.
-   - Hapus atau skip kode lama yang sudah tergantikan (mis. greet, sample Preact); pastikan build production jalan.
+- **Run:** Frontend invoke `run_processing(folder, config_json)`. Tauri spawn Python worker, orchestrate di Rust, emit progress + log. UI update ProgressSection dan LogViewer.
+- **Config / specs / list_models:** Semua dari Rust; tidak ada Python.
 
 ---
 
-## 7. File kunci yang diubah/dibuat
+## 8. Langkah implementasi (urutan)
+
+1. **Python inference worker**
+
+   - Buat `python_ai/infer_worker.py` + `requirements.txt` (ultralytics, torch, Pillow).
+   - Loop stdin → JSON request → predict → stdout JSON. Load model sekali.
+
+2. **Rust – geo + annotate**
+
+   - Modul `tfw`, `geo` (GeoJSON, KML, SHP), `annotate` (draw bbox, save). Unit test pakai sample image + .tfw.
+
+3. **Rust – config + specs + list_models**
+
+   - `config.rs` (SQLite), `specs.rs` (sysinfo, GPU), `list_models` (list dir). Expose via Tauri commands.
+
+4. **Tauri – run_processing**
+
+   - Spawn worker, kirim request per gambar, terima response, panggil geo + annotate, emit progress/log. Integrasi dengan `infer.rs`.
+
+5. **Frontend – React + Tailwind + shadcn**
+
+   - Init shadcn, komponen UI, layout. Hook `run_processing`, `load_config`, `save_config`, `get_system_specs`, `list_models`, folder/model pickers.
+
+6. **Integration & deploy**
+
+   - Test run processing end-to-end. Build Tauri app. Pastikan Python + deps tersedia di mesin user (atau bundle jika pakai sidecar).
+
+---
+
+## 9. File kunci
 
 | File | Aksi |
 
 |------|------|
 
-| `Palm counting AI/python_ai/` | Buat struktur DDD + use cases + infra + CLI |
+| `Palm counting AI/python_ai/infer_worker.py` | Baru. Stdin/stdout JSON, YOLO infer only. |
 
-| `Palm counting AI/package.json` | React, Tailwind, shadcn deps; hapus Preact |
+| `Palm counting AI/python_ai/requirements.txt` | ultralytics, torch, Pillow (minimal). |
 
-| `Palm counting AI/vite.config.ts` | React plugin, Tailwind, alias `@` |
+| `Palm counting AI/python_ai/model/` | Symlink atau copy `.pt` dari pokok_kuning_gui. |
 
-| `Palm counting AI/tsconfig*.json` | `baseUrl` + `paths` untuk `@/` |
+| `Palm counting AI/src-tauri/src/lib.rs` | Tauri commands, register handler. |
 
-| `Palm counting AI/src-tauri/src/lib.rs` | Tauri commands + spawn Python + emit |
+| `Palm counting AI/src-tauri/src/infer.rs` | Spawn worker, send/recv JSON. |
 
-| `Palm counting AI/src-tauri/Cargo.toml` | deps plugin (dialog, dll) jika dipakai |
+| `Palm counting AI/src-tauri/src/config.rs` | SQLite config. |
 
-| `Palm counting AI/src/App.tsx` | Layout + komponen UI di atas |
+| `Palm counting AI/src-tauri/src/specs.rs` | sysinfo, nvidia-smi. |
 
-| `Palm counting AI/src/components/ui/*` | shadcn components |
+| `Palm counting AI/src-tauri/src/geo.rs` | .tfw, GeoJSON, KML, SHP. |
 
-| `Palm counting AI/python_ai/requirements.txt` | Sama seperti [pokok_kuning_gui](pokok_kuning_gui/requirements.txt) (minus PyQt5) |
+| `Palm counting AI/src-tauri/src/annotate.rs` | Draw bbox, save image. |
+
+| `Palm counting AI/package.json` | React, Tailwind, shadcn; hapus Preact. |
+
+| `Palm counting AI/vite.config.ts` | React, Tailwind, alias `@`. |
+
+| `Palm counting AI/src/App.tsx` | Layout + komponen utama. |
 
 ---
 
-## 8. Clarifications (optional)
+## 10. Ringkasan
 
-- **Preact vs React:** Plan pakai React agar shadcn didukung penuh. Jika tetap Preact, perlu uji kompatibilitas shadcn (alias `react` → `preact/compat`).
-- **Database config:** Tetap SQLite single-file seperti sekarang; path bisa disesuaikan agar shared antara CLI standalone dan Tauri app.
-- **`pokok_kuning_gui`:** Tetap ada; hanya dipindah logic ke `python_ai`. Bisa deprecate kemudian atau tetap dipakai sebagai alternatif PyQt5.
+- **Python:** Hanya inference worker. Input/output JSON via stdin/stdout. Model .pt tetap.
+- **Rust:** Config, specs, list models, geo export, annotated images, orchestration, Tauri commands. Tidak ada DDD di Python.
+- **Con:** User tetap butuh Python + PyTorch/ultralytics. **Pro:** Tidak ubah model ke ONNX; Python minimal dan terisolasi.
