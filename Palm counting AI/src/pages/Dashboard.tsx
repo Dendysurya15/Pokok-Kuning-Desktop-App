@@ -1,10 +1,9 @@
 import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
+import { openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -13,9 +12,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Progress } from "@/components/ui/progress";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { Input } from "@/components/ui/input";
+import { FolderOpen, Trash2, Plus, Play } from "lucide-react";
+import { useProcessingStore } from "@/stores/processing";
 
 interface SystemSpecs {
   os: string;
@@ -45,145 +48,367 @@ interface AppConfig {
   last_folder_path?: string;
 }
 
-interface ProgressPayload {
-  processed: number;
-  total: number;
-  current_file: string;
-  status: string;
-  abnormal_count: number;
-  normal_count: number;
+interface TiffEntry {
+  path: string;
+  checked: boolean;
+}
+
+interface TiffTfwGroup {
+  name: string;
+  tifPath: string;
+  tfwPath: string;
+}
+
+function stem(p: string): string {
+  const b = p.split(/[/\\]/).pop() ?? p;
+  return b.replace(/\.(tif|tiff|tfw)$/i, "");
+}
+
+function normalizePathForLookup(p: string): string {
+  return p.replace(/\//g, "\\").replace(/\\\\+/g, "\\").toLowerCase();
+}
+
+function getOutputFolder(
+  tifPath: string,
+  folders: Record<string, string>
+): string | undefined {
+  if (folders[tifPath]) return folders[tifPath];
+  const n = normalizePathForLookup(tifPath);
+  const e = Object.entries(folders).find(([k]) => normalizePathForLookup(k) === n);
+  return e?.[1];
+}
+
+function parseTiffTfwPairs(paths: string[]): TiffTfwGroup[] {
+  const groups = new Map<string, { tif?: string; tfw?: string }>();
+  for (const p of paths) {
+    const dir = p.replace(/[/\\][^/\\]*$/, "");
+    const base = stem(p);
+    const key = dir + "\0" + base;
+    if (!groups.has(key)) groups.set(key, {});
+    const g = groups.get(key)!;
+    if (/\.(tif|tiff)$/i.test(p)) g.tif = p;
+    else if (/\.tfw$/i.test(p)) g.tfw = p;
+  }
+  const out: TiffTfwGroup[] = [];
+  for (const [, g] of groups) {
+    if (g.tif && g.tfw)
+      out.push({ name: stem(g.tif), tifPath: g.tif, tfwPath: g.tfw });
+  }
+  return out;
+}
+
+interface RealtimeUsage {
+  cpu_percent: number;
+  gpu_percent?: number;
+  gpu_memory_used_mb?: number;
+  gpu_memory_total_mb?: number;
+  gpu_temp_c?: number;
 }
 
 export function Dashboard() {
-  const [folder, setFolder] = useState("");
+  const running = useProcessingStore((s) => s.running);
+  const outputFolders = useProcessingStore((s) => s.outputFolders);
+  const startProcessing = useProcessingStore((s) => s.start);
+  const setRunning = useProcessingStore((s) => s.setRunning);
+  const appendLog = useProcessingStore((s) => s.appendLog);
+
+  const [tiffList, setTiffList] = useState<TiffEntry[]>([]);
   const [models, setModels] = useState<YoloModel[]>([]);
   const [activeModelId, setActiveModelId] = useState<string>("");
   const [, setConfig] = useState<AppConfig>({});
   const [specs, setSpecs] = useState<SystemSpecs | null>(null);
-  const [running, setRunning] = useState(false);
-  const [progress, setProgress] = useState<ProgressPayload | null>(null);
-  const [log, setLog] = useState<string[]>([]);
+  const [usage, setUsage] = useState<RealtimeUsage | null>(null);
+  const [addGroupModal, setAddGroupModal] = useState<{
+    name: string;
+    tifPath: string;
+    tfwPath: string;
+  } | null>(null);
+  const [addGroupName, setAddGroupName] = useState("");
 
   const load = useCallback(async () => {
     try {
-      const [s, c, m] = await Promise.all([
+      const [s, c, m, tiffPaths] = await Promise.all([
         invoke<SystemSpecs>("get_specs"),
         invoke<AppConfig>("load_config_cmd").catch(() => ({})),
         invoke<YoloModel[]>("list_models_cmd").catch(() => []),
+        invoke<string[]>("list_tiff_paths_cmd").catch(() => []),
       ]);
       setSpecs(s);
       setConfig(c);
       setModels(m);
       const active = m.find((x) => x.is_active);
       setActiveModelId(active ? String(active.id) : "");
-      const cfg = c as AppConfig;
-      if (cfg?.last_folder_path) setFolder(cfg.last_folder_path);
+      setTiffList(
+        (tiffPaths as string[]).map((path) => ({ path, checked: false }))
+      );
     } catch (e) {
-      setLog((prev) => [...prev, `Error: ${e}`]);
+      appendLog(`Error: ${e}`);
     }
-  }, []);
+  }, [appendLog]);
 
   useEffect(() => {
     load();
   }, [load]);
 
   useEffect(() => {
-    const unlistenLog = listen<string>("processing-log", (e) =>
-      setLog((prev) => [...prev, e.payload])
-    );
-    const unlistenProg = listen<ProgressPayload>("processing-progress", (e) =>
-      setProgress(e.payload)
-    );
-    const unlistenDone = listen("processing-done", () => {
-      setRunning(false);
-      setProgress(null);
-      load();
-    });
-    return () => {
-      unlistenLog.then((u) => u());
-      unlistenProg.then((u) => u());
-      unlistenDone.then((u) => u());
+    let cancelled = false;
+    const poll = async () => {
+      if (cancelled) return;
+      try {
+        const u = await invoke<RealtimeUsage>("get_realtime_usage_cmd");
+        if (!cancelled) setUsage(u);
+      } catch {
+        /* ignore */
+      }
     };
-  }, [load]);
+    void poll();
+    const id = setInterval(poll, 1500);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, []);
 
-  const pickFolder = async () => {
-    const selected = await open({ directory: true, multiple: false });
-    if (!selected || typeof selected !== "string") return;
-    setFolder(selected);
-    try {
-      const c = await invoke<AppConfig>("load_config_cmd").catch(() => ({}));
-      await invoke("save_config_cmd", { c: { ...c, last_folder_path: selected } });
-    } catch {
-      /* ignore */
-    }
-  };
-
-  const run = async () => {
-    if (!folder || !activeModelId) {
-      setLog((prev) => [...prev, "Select folder and an active model first."]);
+  const pickTiffTfw = async () => {
+    const selected = await open({
+      multiple: true,
+      filters: [
+        { name: "TIFF / TFW", extensions: ["tif", "tiff", "tfw"] },
+      ],
+    });
+    if (!selected) return;
+    const files = (Array.isArray(selected) ? selected : [selected]) as string[];
+    const pairs = parseTiffTfwPairs(files);
+    const existing = new Set(tiffList.map((t) => t.path));
+    const toAdd = pairs.filter((p) => !existing.has(p.tifPath));
+    if (toAdd.length === 0) {
+      if (pairs.length === 0)
+        appendLog(
+          "Select matching .tif and .tfw pairs (same folder, same base name, e.g. UPE.tif + UPE.tfw)."
+        );
+      else appendLog("All selected groups are already in the list.");
       return;
     }
-    setRunning(true);
-    setLog((prev) => [...prev, "Starting processing..."]);
-    setProgress(null);
+    if (toAdd.length === 1) {
+      openAddGroupModal({
+        name: toAdd[0].name,
+        tifPath: toAdd[0].tifPath,
+        tfwPath: toAdd[0].tfwPath,
+      });
+      return;
+    }
     try {
-      await invoke("run_processing_cmd", { folder });
+      await invoke("add_tiff_paths_cmd", { paths: toAdd.map((p) => p.tifPath) });
+      const added: TiffEntry[] = toAdd.map((p) => ({ path: p.tifPath, checked: false }));
+      setTiffList((prev) => [...prev, ...added]);
+      appendLog(`Added ${toAdd.length} groups: ${toAdd.map((p) => p.name).join(", ")}.`);
     } catch (e) {
-      setLog((prev) => [...prev, `Error: ${e}`]);
+      appendLog(`Error saving TIFF list: ${e}`);
+    }
+  };
+
+  const confirmAddGroup = async () => {
+    if (!addGroupModal) return;
+    const name = addGroupName.trim() || addGroupModal.name;
+    const { tifPath } = addGroupModal;
+    try {
+      await invoke("add_tiff_paths_cmd", { paths: [tifPath] });
+      setTiffList((prev) => [...prev, { path: tifPath, checked: false }]);
+      appendLog(`Added group "${name}" (${addGroupModal.name}.tif + ${addGroupModal.name}.tfw).`);
+    } catch (e) {
+      appendLog(`Error saving: ${e}`);
+    }
+    setAddGroupModal(null);
+  };
+
+  const openAddGroupModal = (m: { name: string; tifPath: string; tfwPath: string }) => {
+    setAddGroupModal(m);
+    setAddGroupName(m.name);
+  };
+
+  const removeTiff = async (path: string) => {
+    if (running) return;
+    try {
+      await invoke("remove_tiff_path_cmd", { path });
+      setTiffList((prev) => prev.filter((t) => t.path !== path));
+    } catch (e) {
+      appendLog(`Error removing: ${e}`);
+    }
+  };
+
+  const setChecked = (path: string, checked: boolean) => {
+    setTiffList((prev) =>
+      prev.map((t) => (t.path === path ? { ...t, checked } : t))
+    );
+  };
+
+  const selectAll = (checked: boolean) => {
+    setTiffList((prev) => prev.map((t) => ({ ...t, checked })));
+  };
+
+  const checkedCount = tiffList.filter((t) => t.checked).length;
+  const allChecked = tiffList.length > 0 && checkedCount === tiffList.length;
+  const someChecked = checkedCount > 0;
+
+  const run = async () => {
+    const active = models.find((m) => String(m.id) === activeModelId);
+    const modelName = active?.name ?? "";
+    if (!modelName) {
+      appendLog("Select an active YOLO model first.");
+      return;
+    }
+    const toProcess = tiffList.filter((t) => t.checked).map((t) => t.path);
+    if (toProcess.length === 0) {
+      appendLog("Select at least one TIFF (checkbox) to process.");
+      return;
+    }
+    startProcessing();
+    try {
+      await invoke("run_processing_cmd", { files: toProcess, modelName });
+    } catch (e) {
+      appendLog(`Error: ${e}`);
       setRunning(false);
     }
   };
 
-  const cancel = () => invoke("cancel_processing");
-
-  const clearLog = () => setLog([]);
+  const openResultFolder = async (path: string) => {
+    const out = getOutputFolder(path, outputFolders);
+    appendLog(`Open result folder: ${path.split(/[/\\]/).pop() ?? path}`);
+    if (!out) {
+      appendLog("No result folder for this file. Run processing first.");
+      return;
+    }
+    try {
+      await openPath(out);
+    } catch (e1) {
+      try {
+        await revealItemInDir(out);
+      } catch (e2) {
+        appendLog(`Could not open folder: ${e1}`);
+      }
+    }
+  };
 
   return (
-    <div className="space-y-4 p-4">
-      <div className="grid gap-4 md:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle>Status</CardTitle>
+    <div className="space-y-6 p-6">
+      <div className="grid gap-6 md:grid-cols-2">
+        <Card className="border-border/50">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">Status</CardTitle>
+            <p className="text-xs text-muted-foreground">
+              System specs and processing state
+            </p>
           </CardHeader>
-          <CardContent className="space-y-2 text-sm">
+          <CardContent className="space-y-3 text-sm">
             {specs && (
-              <>
-                <p>OS: {specs.os}</p>
-                <p>CPU: {specs.cpu_cores}C / {specs.cpu_threads}T</p>
-                <p>RAM: {specs.total_ram_gb}</p>
-                <p>
-                  GPU:{" "}
-                  <Badge variant={specs.gpu.includes("No") ? "destructive" : "default"}>
-                    {specs.gpu} {specs.gpu_memory}
-                  </Badge>
-                </p>
-              </>
+              <dl className="grid gap-1.5">
+                <div className="flex justify-between gap-2">
+                  <dt className="text-muted-foreground">OS</dt>
+                  <dd className="font-medium">{specs.os}</dd>
+                </div>
+                <div className="flex justify-between gap-2">
+                  <dt className="text-muted-foreground">CPU</dt>
+                  <dd className="font-medium">
+                    {specs.cpu_cores}C / {specs.cpu_threads}T
+                  </dd>
+                </div>
+                <div className="flex justify-between gap-2">
+                  <dt className="text-muted-foreground">RAM</dt>
+                  <dd className="font-medium">{specs.total_ram_gb}</dd>
+                </div>
+                <div className="flex justify-between gap-2 items-center">
+                  <dt className="text-muted-foreground">GPU</dt>
+                  <dd>
+                    <Badge
+                      variant={
+                        specs.gpu.includes("No") ? "destructive" : "default"
+                      }
+                      className="text-xs"
+                    >
+                      {specs.gpu} {specs.gpu_memory}
+                    </Badge>
+                  </dd>
+                </div>
+              </dl>
             )}
-            <p>Folder: {folder || "—"}</p>
-            <p>Process: {running ? "Running" : "Idle"}</p>
+            {usage && (
+              <div className="rounded-md border border-border/50 bg-muted/20 px-2.5 py-2 space-y-1">
+                <p className="text-xs font-medium text-muted-foreground">Live</p>
+                <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs">
+                  <span>
+                    CPU{" "}
+                    <span className="font-mono font-medium">
+                      {usage.cpu_percent.toFixed(1)}%
+                    </span>
+                  </span>
+                  {usage.gpu_percent != null && (
+                    <span>
+                      GPU{" "}
+                      <span className="font-mono font-medium">
+                        {usage.gpu_percent}%
+                      </span>
+                      {usage.gpu_memory_used_mb != null &&
+                        usage.gpu_memory_total_mb != null && (
+                          <span className="text-muted-foreground">
+                            {" "}
+                            ({(usage.gpu_memory_used_mb / 1024).toFixed(1)} /{" "}
+                            {(usage.gpu_memory_total_mb / 1024).toFixed(1)} GB)
+                          </span>
+                        )}
+                      {usage.gpu_temp_c != null && (
+                        <span className="text-muted-foreground">
+                          {" "}
+                          {usage.gpu_temp_c}°C
+                        </span>
+                      )}
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
+            <div className="flex justify-between gap-2 pt-1 border-t border-border/50">
+              <span className="text-muted-foreground">TIFF files</span>
+              <span className="font-medium">{tiffList.length}</span>
+            </div>
+            <div className="flex justify-between gap-2">
+              <span className="text-muted-foreground">Process</span>
+              <Badge variant={running ? "default" : "secondary"} className="text-xs">
+                {running ? "Running" : "Idle"}
+              </Badge>
+            </div>
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>File &amp; Model</CardTitle>
+        <Card className="border-border/50">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">File &amp; Model</CardTitle>
+            <p className="text-xs text-muted-foreground">
+              Select TIFFs, choose a model, then run
+            </p>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="space-y-2">
-              <Label>Folder</Label>
-              <div className="flex gap-2">
-                <Input
-                  readOnly
-                  value={folder}
-                  placeholder="Select folder with images + .tfw"
-                />
-                <Button variant="outline" onClick={pickFolder} disabled={running}>
-                  Browse
-                </Button>
-              </div>
+              <Label className="text-sm font-medium">TIFF files</Label>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={pickTiffTfw}
+                    disabled={running}
+                    className="gap-2"
+                  >
+                    <Plus className="h-4 w-4" />
+                    Add TIFF + TFW
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  Select .tif and .tfw pairs (same folder, same base name, e.g. UPE.tif + UPE.tfw)
+                </TooltipContent>
+              </Tooltip>
             </div>
             <div className="space-y-2">
-              <Label>YOLO Model</Label>
+              <Label className="text-sm font-medium">YOLO Model</Label>
               <Select
                 value={activeModelId}
                 onValueChange={(v) => {
@@ -204,53 +429,128 @@ export function Dashboard() {
                 </SelectContent>
               </Select>
             </div>
-            <div className="flex gap-2">
-              <Button onClick={run} disabled={running || !folder || !activeModelId}>
-                Run processing
-              </Button>
-              {running && (
-                <Button variant="destructive" onClick={cancel}>
-                  Cancel
-                </Button>
-              )}
-            </div>
+            {addGroupModal && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+                <Card className="w-full max-w-sm border-border bg-card p-4 shadow-lg">
+                  <p className="text-sm font-medium mb-2">Add group</p>
+                  <p className="text-xs text-muted-foreground mb-2">
+                    {addGroupModal.name}.tif + {addGroupModal.name}.tfw
+                  </p>
+                  <Label className="text-xs text-muted-foreground">Group name (e.g. UPE)</Label>
+                  <Input
+                    value={addGroupName}
+                    onChange={(e) => setAddGroupName(e.target.value)}
+                    placeholder={addGroupModal.name}
+                    className="mt-1 mb-4"
+                  />
+                  <div className="flex justify-end gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setAddGroupModal(null)}
+                    >
+                      Cancel
+                    </Button>
+                    <Button size="sm" onClick={confirmAddGroup}>
+                      Add
+                    </Button>
+                  </div>
+                </Card>
+              </div>
+            )}
+            {tiffList.length > 0 && (
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    id="select-all"
+                    checked={allChecked}
+                    onCheckedChange={(c) => selectAll(!!c)}
+                    disabled={running}
+                  />
+                  <Label
+                    htmlFor="select-all"
+                    className="text-sm font-normal cursor-pointer"
+                  >
+                    Select all ({checkedCount} selected)
+                  </Label>
+                </div>
+                <ScrollArea className="h-36 rounded-lg border border-border/50 bg-muted/20 p-2">
+                  <div className="space-y-1.5">
+                    {tiffList.map((t) => (
+                      <div
+                        key={t.path}
+                        className="flex items-center gap-2 text-sm rounded-md px-2 py-1.5 hover:bg-muted/50"
+                      >
+                        <Checkbox
+                          checked={t.checked}
+                          onCheckedChange={(c) => setChecked(t.path, !!c)}
+                          disabled={running}
+                        />
+                        <span
+                          className="flex-1 truncate font-mono text-xs"
+                          title={t.path}
+                        >
+                          {(() => {
+                            const base = t.path.split(/[/\\]/).pop() ?? t.path;
+                            const s = stem(t.path);
+                            return `${s} (${base} + ${s}.tfw)`;
+                          })()}
+                        </span>
+                        {getOutputFolder(t.path, outputFolders) && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 shrink-0"
+                            title="Open result folder"
+                            onClick={() => openResultFolder(t.path)}
+                          >
+                            <FolderOpen className="h-4 w-4" />
+                          </Button>
+                        )}
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7 shrink-0 text-muted-foreground hover:text-destructive"
+                              onClick={() => removeTiff(t.path)}
+                              disabled={running}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>Remove from list</TooltipContent>
+                        </Tooltip>
+                      </div>
+                    ))}
+                  </div>
+                </ScrollArea>
+              </div>
+            )}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="inline-block">
+                  <Button
+                    onClick={run}
+                    disabled={running || !activeModelId || !someChecked}
+                    className="gap-2"
+                  >
+                    <Play className="h-4 w-4" />
+                    Run processing
+                  </Button>
+                </span>
+              </TooltipTrigger>
+              <TooltipContent>
+                {!activeModelId
+                  ? "Select an active YOLO model first"
+                  : !someChecked
+                    ? "Select at least one TIFF to process"
+                    : "Process selected TIFFs with the active model"}
+              </TooltipContent>
+            </Tooltip>
           </CardContent>
         </Card>
       </div>
-
-      {progress && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Progress</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            <Progress value={(progress.processed / progress.total) * 100} />
-            <p className="text-sm">
-              {progress.processed} / {progress.total} — {progress.current_file} —{" "}
-              {progress.status}
-            </p>
-            <p className="text-sm text-muted-foreground">
-              Abnormal: {progress.abnormal_count} — Normal: {progress.normal_count}
-            </p>
-          </CardContent>
-        </Card>
-      )}
-
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between">
-          <CardTitle>Log</CardTitle>
-          <Button variant="ghost" size="sm" onClick={clearLog}>
-            Clear
-          </Button>
-        </CardHeader>
-        <CardContent>
-          <ScrollArea className="h-48 rounded border p-2 font-mono text-xs">
-            {log.map((line, i) => (
-              <div key={i}>{line}</div>
-            ))}
-          </ScrollArea>
-        </CardContent>
-      </Card>
     </div>
   );
 }

@@ -8,6 +8,8 @@
   "permissions": [
     "core:default",
     "opener:default",
-    "dialog:default"
+    "opener:allow-open-path",
+    "dialog:default",
+    "notification:default"
   ]
 }

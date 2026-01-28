@@ -12,6 +12,10 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
+import { Progress } from "@/components/ui/progress";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { Loader2, Plus } from "lucide-react";
+import { useConversionStore } from "@/stores/conversion";
 
 interface YoloModel {
   id: number;
@@ -22,6 +26,9 @@ interface YoloModel {
 
 export function YoloModelPage() {
   const [models, setModels] = useState<YoloModel[]>([]);
+  const status = useConversionStore((s) => s.status);
+  const isAdding = useConversionStore((s) => s.isAdding);
+  const setStatus = useConversionStore((s) => s.setStatus);
 
   const load = useCallback(async () => {
     try {
@@ -38,15 +45,34 @@ export function YoloModelPage() {
 
   const addModel = async () => {
     const selected = await open({
-      multiple: false,
-      filters: [{ name: "YOLO model", extensions: ["pt"] }],
+      multiple: true,  // Enable multiple file selection
+      filters: [{ name: "YOLO model", extensions: ["pt", "onnx"] }],
     });
-    if (!selected || typeof selected !== "string") return;
+    if (!selected) return;
+    
+    // Handle both single and multiple selection
+    const files = Array.isArray(selected) ? selected : [selected];
+    if (files.length === 0) return;
+    
+    setStatus(null, true);
+
     try {
-      await invoke("add_model_cmd", { sourcePath: selected, name: undefined });
+      if (files.length === 1) {
+        await invoke("add_model_cmd", { sourcePath: files[0], name: undefined });
+      } else {
+        await invoke("add_models_cmd", { sourcePaths: files });
+      }
       await load();
     } catch (e) {
       console.error(e);
+      setStatus(`Error: ${e}`, false);
+      setTimeout(() => setStatus(null, false), 5000);
+    } finally {
+      if (files.length === 1) {
+        setStatus(null, false);
+      } else {
+        setTimeout(() => setStatus(null, false), 3000);
+      }
     }
   };
 
@@ -69,15 +95,68 @@ export function YoloModelPage() {
   };
 
   return (
-    <div className="space-y-4 p-4">
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between">
-          <CardTitle>YOLO Model Library</CardTitle>
-          <Button onClick={addModel}>Add model</Button>
+    <div className="space-y-6 p-6">
+      <Card className="border-border/50">
+        <CardHeader className="flex flex-row items-center justify-between pb-2">
+          <div>
+            <CardTitle className="text-base">YOLO Model Library</CardTitle>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Add .pt or .onnx models and set one as default for inference
+            </p>
+          </div>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button onClick={addModel} disabled={isAdding} className="gap-2">
+                {isAdding ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Adding…
+                  </>
+                ) : (
+                  <>
+                    <Plus className="h-4 w-4" />
+                    Add model
+                  </>
+                )}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Add .pt or .onnx YOLO models</TooltipContent>
+          </Tooltip>
         </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-4">
+          {status && (
+            <div
+              className={
+                status.startsWith("Error")
+                  ? "rounded-lg border border-destructive/30 bg-destructive/10 p-3"
+                  : status.includes("Successfully")
+                    ? "rounded-lg border border-green-500/30 bg-green-500/10 dark:bg-green-500/5 dark:border-green-500/20 p-3"
+                    : "rounded-lg border border-border bg-muted/50 p-3"
+              }
+            >
+              <div className="flex items-center gap-2">
+                {isAdding && <Loader2 className="h-4 w-4 animate-spin shrink-0" />}
+                <p
+                  className={
+                    status.startsWith("Error")
+                      ? "text-sm text-destructive"
+                      : status.includes("Successfully")
+                        ? "text-sm text-green-600 dark:text-green-400"
+                        : "text-sm"
+                  }
+                >
+                  {status}
+                </p>
+              </div>
+              {isAdding && <Progress value={undefined} className="mt-2" />}
+            </div>
+          )}
           {models.length === 0 ? (
-            <p className="text-muted-foreground">No models. Add a .pt file.</p>
+            <div className="rounded-lg border border-dashed border-border/60 bg-muted/20 py-12 text-center">
+              <p className="text-sm text-muted-foreground">
+                No models yet. Add a .pt or .onnx file to get started.
+              </p>
+            </div>
           ) : (
             <Table>
               <TableHeader>
@@ -91,31 +170,46 @@ export function YoloModelPage() {
               <TableBody>
                 {models.map((m) => (
                   <TableRow key={m.id}>
-                    <TableCell>{m.name}</TableCell>
-                    <TableCell className="max-w-[300px] truncate font-mono text-xs">
+                    <TableCell className="font-medium">{m.name}</TableCell>
+                    <TableCell
+                      className="max-w-[280px] truncate font-mono text-xs text-muted-foreground"
+                      title={m.path}
+                    >
                       {m.path}
                     </TableCell>
                     <TableCell>
                       {m.is_active ? (
-                        <Badge>Active</Badge>
+                        <Badge variant="default" className="text-xs">
+                          Active
+                        </Badge>
                       ) : (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => setActive(m.id)}
-                        >
-                          Set default
-                        </Button>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => setActive(m.id)}
+                            >
+                              Set default
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>Use this model for processing</TooltipContent>
+                        </Tooltip>
                       )}
                     </TableCell>
                     <TableCell>
-                      <Button
-                        variant="destructive"
-                        size="sm"
-                        onClick={() => remove(m.id)}
-                      >
-                        Remove
-                      </Button>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="destructive"
+                            size="sm"
+                            onClick={() => remove(m.id)}
+                          >
+                            Remove
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>Remove from library</TooltipContent>
+                      </Tooltip>
                     </TableCell>
                   </TableRow>
                 ))}

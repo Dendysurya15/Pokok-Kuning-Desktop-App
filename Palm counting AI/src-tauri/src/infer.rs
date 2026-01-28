@@ -1,58 +1,83 @@
-//! Spawn Python inference worker, orchestrate processing, emit progress/log.
+//! Orchestrate processing, emit progress/log.
+//! Semua inference dilakukan di Python dengan YOLO (ultralytics).
+//! Rust hanya untuk orchestration dan UI.
 
-use crate::annotate;
 use crate::config::AppConfig;
-use crate::geo;
-use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
-use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
-use std::thread;
 
-const IMAGE_EXT: [&str; 6] = [".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"];
-
-fn infer_worker_path() -> std::path::PathBuf {
-    // Coba gunakan sidecar terlebih dahulu (untuk production build)
+// Helper untuk get infer_worker sidecar path (mirip get_converter_path di config.rs)
+fn get_infer_worker_path() -> (std::path::PathBuf, bool) {
+    // Try sidecar executable first
     if let Ok(exe) = std::env::current_exe() {
         if let Some(exe_dir) = exe.parent() {
-            // Sidecar biasanya di directory yang sama dengan executable
+            // Check in src-tauri/binaries/ (dev mode)
+            if let Some(target_dir) = exe_dir.parent() {
+                if let Some(src_tauri_dir) = target_dir.parent() {
+                    let sidecar_bin = src_tauri_dir.join("binaries").join("infer_worker-x86_64-pc-windows-msvc.exe");
+                    if sidecar_bin.exists() {
+                        if let Ok(metadata) = std::fs::metadata(&sidecar_bin) {
+                            if metadata.len() > 1_000_000 {
+                                return (sidecar_bin, false);
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // Check in same directory as executable (production)
             let sidecar = exe_dir.join("infer_worker.exe");
             if sidecar.exists() {
-                return sidecar;
+                if let Ok(metadata) = std::fs::metadata(&sidecar) {
+                    if metadata.len() > 1_000_000 {
+                        return (sidecar, false);
+                    }
+                }
             }
-            // Atau di subdirectory binaries
+            
+            // Check in subdirectory binaries (production)
             let sidecar_bin = exe_dir.join("binaries").join("infer_worker.exe");
             if sidecar_bin.exists() {
-                return sidecar_bin;
+                if let Ok(metadata) = std::fs::metadata(&sidecar_bin) {
+                    if metadata.len() > 1_000_000 {
+                        return (sidecar_bin, false);
+                    }
+                }
             }
         }
     }
     
-    // Fallback ke Python script (untuk development)
-    let manifest = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".into());
-    let base = Path::new(&manifest).parent().unwrap_or(Path::new("."));
-    base.join("python_ai").join("infer_worker.py")
-}
-
-fn list_images(folder: &Path) -> Vec<std::path::PathBuf> {
-    let mut out = Vec::new();
-    let Ok(entries) = std::fs::read_dir(folder) else { return out };
-    for e in entries.flatten() {
-        let p = e.path();
-        if let Some(ext) = p.extension() {
-            let ext = ext.to_string_lossy().to_lowercase();
-            if IMAGE_EXT.iter().any(|e| e.trim_start_matches('.') == ext.as_str()) {
-                out.push(p);
+    // Fallback to Python script for dev mode
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(exe_dir) = exe.parent() {
+            let possible_paths = vec![
+                exe_dir.parent().and_then(|p| p.parent()).map(|p| p.join("python_ai").join("infer_worker.py")),
+            ];
+            
+            for path_opt in possible_paths {
+                if let Some(path) = path_opt {
+                    if path.exists() {
+                        return (path, true);
+                    }
+                }
             }
         }
     }
-    out.sort();
-    out
-}
-
-fn tfw_path(image_path: &Path) -> std::path::PathBuf {
-    image_path.with_extension("tfw")
+    
+    // Fallback from CWD
+    if let Ok(cwd) = std::env::current_dir() {
+        let fallback1 = cwd.join("src-tauri").join("python_ai").join("infer_worker.py");
+        if fallback1.exists() {
+            return (fallback1, true);
+        }
+        let fallback2 = cwd.join("python_ai").join("infer_worker.py");
+        if fallback2.exists() {
+            return (fallback2, true);
+        }
+    }
+    
+    // Default path
+    (std::path::PathBuf::from("src-tauri/python_ai/infer_worker.py"), true)
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -63,6 +88,8 @@ pub struct ProgressPayload {
     pub status: String,
     pub abnormal_count: u32,
     pub normal_count: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_folder: Option<String>,
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -74,299 +101,152 @@ pub struct DonePayload {
     pub total_normal: u32,
 }
 
-pub fn run_processing(
-    folder: &str,
-    config: &AppConfig,
+/// Process daftar file .tif; output per file ke folder {stem}_{model_name}/.
+pub fn run_processing_files(
+    files: &[String],
     model_path: &str,
+    model_name: &str,
+    config: &AppConfig,
     cancel: &AtomicBool,
-    mut on_log: impl FnMut(&str),
+    mut on_log: impl FnMut(&str) + Send + 'static,
     mut on_progress: impl FnMut(&ProgressPayload),
     mut on_done: impl FnMut(&DonePayload),
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let folder = Path::new(folder);
-    if !folder.is_dir() {
-        return Err("Folder not found".into());
-    }
+    use std::io::{BufRead, BufReader};
+    use std::process::{Command, Stdio};
 
-    let images = list_images(folder);
-    let total = images.len();
-    if total == 0 {
-        on_log("No images found in folder.");
-        on_done(&DonePayload {
-            successful: 0,
-            failed: 0,
-            total: 0,
-            total_abnormal: 0,
-            total_normal: 0,
-        });
-        return Ok(());
+    if files.is_empty() {
+        return Err("No files to process".into());
     }
-
-    let worker = infer_worker_path();
-    let mut is_sidecar = worker.extension().map(|e| e == "exe").unwrap_or(false);
-    
-    if !worker.exists() {
-        return Err(format!("Inference worker not found: {}\n\nUntuk development: pastikan python_ai/infer_worker.py ada.\nUntuk production: jalankan scripts/build_python_sidecar.py terlebih dahulu.", worker.display()).into());
-    }
-    
-    // Deteksi apakah sidecar valid (bukan placeholder)
-    // Placeholder biasanya sangat kecil (< 1KB), sedangkan real sidecar > 100MB
-    if is_sidecar {
-        if let Ok(metadata) = std::fs::metadata(&worker) {
-            let size = metadata.len();
-            // Jika file terlalu kecil (< 1MB), kemungkinan placeholder
-            if size < 1_000_000 {
-                on_log(&format!("Sidecar terlalu kecil ({} bytes), kemungkinan placeholder. Fallback ke Python script.", size));
-                is_sidecar = false;
-                // Update worker path ke Python script
-                let manifest = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".into());
-                let base = Path::new(&manifest).parent().unwrap_or(Path::new("."));
-                let python_script = base.join("python_ai").join("infer_worker.py");
-                if python_script.exists() {
-                    // worker akan di-update di bawah
-                } else {
-                    return Err(format!("Python script tidak ditemukan: {}", python_script.display()).into());
-                }
-            }
-        }
-    }
-
-    let imgsz: i32 = config.imgsz.parse().unwrap_or(1280);
-    let conf: f64 = config.conf.parse().unwrap_or(0.2);
-    let iou: f64 = config.iou.parse().unwrap_or(0.2);
-    let max_det: i32 = config.max_det.parse().unwrap_or(10000);
-    let device = config.device.as_str();
-    let device = if device.is_empty() { "auto" } else { device };
-    let convert_kml = config.convert_kml.eq_ignore_ascii_case("true");
-    let convert_shp = config.convert_shp.eq_ignore_ascii_case("true");
-    let save_annotated = config.save_annotated.eq_ignore_ascii_case("true");
-    let line_width: u32 = config.line_width.parse().unwrap_or(3).max(1);
-
-    // Verify model file exists
-    if !Path::new(model_path).is_file() {
+    let model_path_buf = Path::new(model_path);
+    if !model_path_buf.is_file() {
         return Err(format!("Model file not found: {}", model_path).into());
     }
-    
-    // Jika sidecar (exe), langsung jalankan. Jika Python script, perlu Python interpreter.
-    let mut cmd = if is_sidecar {
-        on_log(&format!("Using Python sidecar: {}", worker.display()));
-        Command::new(&worker)
-    } else {
-        // Fallback ke Python script (untuk development atau jika sidecar tidak valid)
-        let manifest = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".into());
-        let base = Path::new(&manifest).parent().unwrap_or(Path::new("."));
-        let python_script = base.join("python_ai").join("infer_worker.py");
-        
-        if !python_script.exists() {
-            return Err(format!("Python script tidak ditemukan: {}", python_script.display()).into());
-        }
-        let python = which_python();
-        // Verify Python is available
-        let test_output = Command::new(&python)
-            .arg("-c")
-            .arg("import sys; sys.path.insert(0, '.'); import json; print('OK')")
-            .current_dir(python_script.parent().unwrap())
-            .output();
-        
-        if test_output.is_err() || !test_output.unwrap().status.success() {
-            on_log(&format!("Warning: Python test failed. Using: {}", python));
-        }
-        
-        on_log(&format!("Using Python script: {} {}", python, python_script.display()));
-        let mut py_cmd = Command::new(&python);
-        py_cmd.arg(&python_script);
-        py_cmd.current_dir(python_script.parent().unwrap());
-        py_cmd
-    };
-    
-    let mut child = cmd
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
+    let (worker_path, use_python) = get_infer_worker_path();
+    if !worker_path.exists() {
+        return Err(format!(
+            "infer_worker sidecar not found. Run 'npm run build:sidecar' to build it."
+        )
+        .into());
+    }
 
-    let mut stdin = child.stdin.take().ok_or("stdin")?;
-    let stdout = child.stdout.take().ok_or("stdout")?;
-    let stderr = child.stderr.take().ok_or("stderr")?;
-    
-    // Spawn thread to read stderr and collect in shared buffer
-    let stderr_buffer: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
-    let stderr_buffer_clone = Arc::clone(&stderr_buffer);
-    let stderr_handle = thread::spawn(move || {
-        let reader = BufReader::new(stderr);
-        let mut error_lines = Vec::new();
-        for line in reader.lines() {
-            if let Ok(l) = line {
-                error_lines.push(l.clone());
-                if let Ok(mut buf) = stderr_buffer_clone.lock() {
-                    buf.push(l);
-                }
-            }
-        }
+    on_log("Starting processing with Python YOLO...");
+    let config_json = serde_json::json!({
+        "imgsz": config.imgsz,
+        "conf": config.conf,
+        "iou": config.iou,
+        "max_det": config.max_det,
+        "device": config.device,
+        "convert_kml": config.convert_kml,
+        "convert_shp": config.convert_shp,
+        "save_annotated": config.save_annotated,
+        "line_width": config.line_width,
+        "show_labels": config.show_labels,
+        "show_conf": config.show_conf,
     });
-    
-    let mut reader = BufReader::new(stdout);
+    let files_json = serde_json::to_string(files)
+        .map_err(|e| format!("Failed to serialize files: {}", e))?;
+
+    let mut cmd = if use_python {
+        let mut c = Command::new("python");
+        c.arg("-u").arg(&worker_path);
+        c.env("PYTHONUNBUFFERED", "1");
+        c
+    } else {
+        Command::new(&worker_path)
+    };
+    cmd.arg("--infer-files")
+        .arg(&files_json)
+        .arg(model_path)
+        .arg(model_name)
+        .arg(config_json.to_string())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("Failed to start infer_worker: {}", e))?;
+    let stdout = child.stdout.take().ok_or("Failed to capture stdout")?;
+    let stderr = child.stderr.take().ok_or("Failed to capture stderr")?;
+    let stdout_reader = BufReader::new(stdout);
+    let stderr_reader = BufReader::new(stderr);
 
     let mut successful = 0_usize;
     let mut failed = 0_usize;
     let mut total_abnormal = 0_u32;
     let mut total_normal = 0_u32;
-    let annotated_dir = folder.join("annotated");
+    let mut total = 0_usize;
 
-    for (idx, image_path) in images.iter().enumerate() {
-        if cancel.load(Ordering::Relaxed) {
-            on_log("Cancelled.");
-            break;
-        }
-
-        let name = image_path.file_name().and_then(|s| s.to_str()).unwrap_or("?");
-        on_log(&format!("Processing {} ({}/{})", name, idx + 1, total));
-
-        let tfw_path = tfw_path(image_path);
-        let Some(tfw) = geo::read_tfw(&tfw_path) else {
-            on_log(&format!("  Skip: no .tfw for {}", name));
-            failed += 1;
-            on_progress(&ProgressPayload {
-                processed: idx + 1,
-                total,
-                current_file: name.to_string(),
-                status: "Skip (no .tfw)".to_string(),
-                abnormal_count: 0,
-                normal_count: 0,
-            });
-            continue;
-        };
-
-        let req = serde_json::json!({
-            "image": image_path.to_string_lossy(),
-            "model": model_path,
-            "imgsz": imgsz,
-            "conf": conf,
-            "iou": iou,
-            "max_det": max_det,
-            "device": device,
-        });
-        if writeln!(stdin, "{}", req).is_err() {
-            on_log("  Error writing to worker.");
-            failed += 1;
-            break;
-        }
-        stdin.flush()?;
-
-        let mut line = String::new();
-        if reader.read_line(&mut line)? == 0 {
-            on_log("  Worker closed stdout.");
-            // Check for stderr messages collected so far
-            if let Ok(buf) = stderr_buffer.lock() {
-                if !buf.is_empty() {
-                    let err_msg = buf.join("\n");
-                    on_log(&format!("  Python stderr: {}", err_msg));
+    use std::sync::{Arc, Mutex};
+    let on_log_shared = Arc::new(Mutex::new(on_log));
+    let on_log_clone = on_log_shared.clone();
+    let stderr_reader_clone = stderr_reader;
+    std::thread::spawn(move || {
+        let mut lines = stderr_reader_clone.lines();
+        while let Some(Ok(line)) = lines.next() {
+            if !line.trim().is_empty() {
+                if let Ok(mut log_fn) = on_log_clone.lock() {
+                    log_fn(&line);
                 }
             }
-            failed += 1;
+        }
+    });
+
+    let mut stdout_lines = stdout_reader.lines();
+    loop {
+        if cancel.load(Ordering::Relaxed) {
+            let _ = child.kill();
+            if let Ok(mut log_fn) = on_log_shared.lock() {
+                log_fn("Cancelled.");
+            }
             break;
         }
-        let line = line.trim();
-        let resp: serde_json::Value = match serde_json::from_str(line) {
-            Ok(v) => v,
-            Err(_) => {
-                on_log(&format!("  Invalid JSON: {}", &line[..line.len().min(80)]));
-                failed += 1;
-                on_progress(&ProgressPayload {
-                    processed: idx + 1,
-                    total,
-                    current_file: name.to_string(),
-                    status: "Parse error".to_string(),
-                    abnormal_count: 0,
-                    normal_count: 0,
-                });
-                continue;
-            }
+        let line = match stdout_lines.next() {
+            Some(Ok(line)) => line,
+            Some(Err(_)) | None => break,
         };
-
-        let err_msg = resp.get("error").and_then(|v| v.as_str());
-        if let Some(e) = err_msg {
-            on_log(&format!("  Inference error: {}", e));
-            failed += 1;
-            on_progress(&ProgressPayload {
-                processed: idx + 1,
-                total,
-                current_file: name.to_string(),
-                status: format!("Error: {}", e),
-                abnormal_count: 0,
-                normal_count: 0,
-            });
+        if line.trim().is_empty() {
             continue;
         }
-
-        let detections: Vec<geo::Detection> = match resp.get("detections") {
-            Some(serde_json::Value::Array(arr)) => arr
-                .iter()
-                .filter_map(|v| serde_json::from_value(v.clone()).ok())
-                .collect(),
-            _ => vec![],
-        };
-
-        let mut abn = 0u32;
-        let mut nor = 0u32;
-        for d in &detections {
-            if d.class_id == 0 {
-                abn += 1;
-            } else if d.class_id == 1 {
-                nor += 1;
+        if let Ok(progress) = serde_json::from_str::<serde_json::Value>(&line) {
+            if progress.get("done").and_then(|v| v.as_bool()).unwrap_or(false) {
+                successful = progress.get("successful").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                failed = progress.get("failed").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                total = progress.get("total").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                total_abnormal = progress.get("total_abnormal").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+                total_normal = progress.get("total_normal").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+                break;
+            } else {
+                let processed = progress.get("processed").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                total = progress.get("total").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                let current_file = progress.get("current_file").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let status = progress.get("status").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let abnormal_count = progress.get("abnormal_count").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+                let normal_count = progress.get("normal_count").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+                successful = progress.get("successful").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                failed = progress.get("failed").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                let output_folder = progress
+                    .get("output_folder")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty())
+                    .map(String::from);
+                on_progress(&ProgressPayload {
+                    processed,
+                    total,
+                    current_file,
+                    status,
+                    abnormal_count,
+                    normal_count,
+                    output_folder,
+                });
             }
         }
-        total_abnormal += abn;
-        total_normal += nor;
-
-        let fc = geo::create_geojson(&detections, &tfw);
-        let out_dir = folder;
-        if let Some(geojson_path) = geo::save_geojson(&fc, image_path, out_dir) {
-            if convert_kml {
-                let kml_path = geojson_path.with_extension("kml");
-                let _ = geo::write_kml(&detections, &tfw, &kml_path);
-            }
-            if convert_shp {
-                let shp_path = geojson_path.with_extension("shp");
-                let _ = geo::write_shp(&detections, &tfw, &shp_path);
-            }
-        }
-
-        if save_annotated && !detections.is_empty() {
-            let _ = annotate::save_annotated(image_path, &detections, &annotated_dir, line_width);
-        }
-
-        successful += 1;
-        on_progress(&ProgressPayload {
-            processed: idx + 1,
-            total,
-            current_file: name.to_string(),
-            status: "OK".to_string(),
-            abnormal_count: abn,
-            normal_count: nor,
-        });
     }
 
-    drop(stdin);
-    let status = child.wait();
-    // Wait for stderr thread to finish
-    let _ = stderr_handle.join();
-    // Get final stderr messages
-    if let Ok(buf) = stderr_buffer.lock() {
-        if !buf.is_empty() {
-            let err_msg = buf.join("\n");
-            on_log(&format!("Python worker stderr: {}", err_msg));
-        }
+    let _ = child.wait();
+    if let Ok(mut log_fn) = on_log_shared.lock() {
+        log_fn(&format!("Done. {} succeeded, {} failed.", successful, failed));
     }
-    if let Ok(exit_status) = status {
-        if !exit_status.success() {
-            on_log(&format!("Python worker exited with code: {:?}", exit_status.code()));
-        }
-    }
-    on_log(&format!(
-        "Done. {} succeeded, {} failed.",
-        successful, failed
-    ));
     on_done(&DonePayload {
         successful,
         failed,
@@ -377,12 +257,3 @@ pub fn run_processing(
     Ok(())
 }
 
-fn which_python() -> String {
-    if std::process::Command::new("python").arg("--version").output().is_ok() {
-        return "python".into();
-    }
-    if std::process::Command::new("python3").arg("--version").output().is_ok() {
-        return "python3".into();
-    }
-    "python".to_string()
-}

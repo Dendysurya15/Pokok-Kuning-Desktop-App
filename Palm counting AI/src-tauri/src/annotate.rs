@@ -19,12 +19,15 @@ fn class_color(class_id: i64) -> image::Rgb<u8> {
 }
 
 /// Load image, draw detections as rectangles, save to `annotated_folder/<stem>_annotated.jpg`.
+/// Note: Annotated images sekarang disimpan oleh Python sidecar, fungsi ini tidak digunakan lagi.
+/// Tapi tetap dipertahankan untuk backward compatibility.
 pub fn save_annotated(
     image_path: &Path,
     detections: &[Detection],
     annotated_folder: &Path,
     line_width: u32,
 ) -> Result<std::path::PathBuf, Box<dyn std::error::Error + Send + Sync>> {
+    // Load image dengan standard image::open (Python sidecar sudah handle TIFF conversion)
     let img = image::open(image_path)
         .map_err(|e| format!("open image {}: {}", image_path.display(), e))?
         .to_rgb8();

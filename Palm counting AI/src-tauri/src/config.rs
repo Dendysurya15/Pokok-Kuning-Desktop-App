@@ -63,6 +63,17 @@ pub fn setup_db() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         [],
     )?;
 
+    conn.execute(
+        r#"
+        CREATE TABLE IF NOT EXISTS tiff_files (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            path TEXT UNIQUE NOT NULL,
+            created_at TEXT DEFAULT (datetime('now'))
+        )
+        "#,
+        [],
+    )?;
+
     // Add columns if missing (migrations)
     let add_col = |name: &str, sql: &str| -> Result<(), rusqlite::Error> {
         let exists: bool = conn.query_row(
@@ -255,6 +266,9 @@ pub fn list_models() -> Result<Vec<YoloModel>, Box<dyn std::error::Error + Send 
 pub fn add_model(name: String, source_path: &Path) -> Result<YoloModel, Box<dyn std::error::Error + Send + Sync>> {
     setup_db()?;
     std::fs::create_dir_all(models_dir())?;
+    
+    // Support .pt dan .onnx langsung (tidak perlu convert)
+    // Python sidecar akan handle inference untuk kedua format
     let base = source_path
         .file_name()
         .and_then(|s| s.to_str())
@@ -262,10 +276,10 @@ pub fn add_model(name: String, source_path: &Path) -> Result<YoloModel, Box<dyn 
     let dest = models_dir().join(base);
     let dest = unique_path(&dest);
     std::fs::copy(source_path, &dest)?;
-    let path = dest.to_string_lossy().into_owned();
+    let final_path = dest.to_string_lossy().into_owned();
 
     let conn = open_db()?;
-    conn.execute("INSERT INTO yolo_models (name, path) VALUES (?1, ?2)", [&name, &path])?;
+    conn.execute("INSERT INTO yolo_models (name, path) VALUES (?1, ?2)", [&name, &final_path])?;
     let id = conn.last_insert_rowid();
     let active: Option<i64> = conn
         .query_row("SELECT active_model_id FROM configuration ORDER BY id DESC LIMIT 1", [], |r| {
@@ -276,7 +290,7 @@ pub fn add_model(name: String, source_path: &Path) -> Result<YoloModel, Box<dyn 
     Ok(YoloModel {
         id,
         name,
-        path,
+        path: final_path,
         is_active: active == Some(id),
     })
 }
@@ -314,10 +328,6 @@ pub fn set_active_model(id: i64) -> Result<(), Box<dyn std::error::Error + Send 
     save_config(&c)
 }
 
-pub fn get_models_dir() -> PathBuf {
-    models_dir()
-}
-
 pub fn get_active_model_path() -> Result<Option<String>, Box<dyn std::error::Error + Send + Sync>> {
     let c = load_config()?;
     let aid = match c.active_model_id {
@@ -327,4 +337,39 @@ pub fn get_active_model_path() -> Result<Option<String>, Box<dyn std::error::Err
     let conn = open_db()?;
     let path: Option<String> = conn.query_row("SELECT path FROM yolo_models WHERE id = ?1", [aid], |r| r.get(0))?;
     Ok(path)
+}
+
+/// Simpan daftar path TIFF ke SQLite (local). Duplikat di-ignore.
+pub fn add_tiff_paths(paths: Vec<String>) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
+    setup_db()?;
+    let conn = open_db()?;
+    let mut added = 0_usize;
+    for p in paths {
+        if p.trim().is_empty() {
+            continue;
+        }
+        match conn.execute("INSERT OR IGNORE INTO tiff_files (path) VALUES (?1)", [&p]) {
+            Ok(1) => added += 1,
+            _ => {}
+        }
+    }
+    Ok(added)
+}
+
+/// Ambil daftar path TIFF dari SQLite (urutan created_at).
+pub fn list_tiff_paths() -> Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>> {
+    setup_db()?;
+    let conn = open_db()?;
+    let mut stmt = conn.prepare("SELECT path FROM tiff_files ORDER BY created_at ASC")?;
+    let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+    let out: Result<Vec<_>, _> = rows.collect();
+    Ok(out?)
+}
+
+/// Hapus satu path TIFF dari daftar.
+pub fn remove_tiff_path(path: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    setup_db()?;
+    let conn = open_db()?;
+    conn.execute("DELETE FROM tiff_files WHERE path = ?1", [path])?;
+    Ok(())
 }

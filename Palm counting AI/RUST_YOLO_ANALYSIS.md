@@ -192,20 +192,9 @@ pub fn load_yolo_model(pt_path: &str) -> YOLO {
 ### Step 1: Model Conversion
 
 ```python
-# scripts/convert_to_onnx.py
-from ultralytics import YOLO
-import sys
-
-def convert_model(pt_path: str, onnx_path: str):
-    model = YOLO(pt_path)
-    model.export(
-        format="onnx",
-        imgsz=1280,
-        simplify=True,
-        opset=12,
-        dynamic=False
-    )
-    print(f"Converted: {pt_path} -> {onnx_path}")
+# Conversion via sidecar Python worker
+# python_ai/infer_worker.py --convert model.pt model.onnx 1280
+# Atau otomatis saat add model via UI
 ```
 
 ### Step 2: Rust Implementation
