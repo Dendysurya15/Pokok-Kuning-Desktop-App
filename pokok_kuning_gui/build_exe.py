@@ -10,6 +10,10 @@ import shutil
 import subprocess
 from pathlib import Path
 
+# ========== UBAH VERSION DI SINI ==========
+APP_VERSION = "1.1.1"   # Format: "1.0.0" atau "1.2.3.4"
+# ==========================================
+
 def check_environment():
     """Check if we're in the correct environment"""
     conda_env = os.environ.get('CONDA_DEFAULT_ENV')
@@ -39,6 +43,56 @@ def check_environment():
     except ImportError:
         print("❌ PyTorch not installed!")
         return False
+
+def _version_to_tuple(s):
+    """Convert '1.0.0' or '1.2.3.4' -> (1, 0, 0, 0) or (1, 2, 3, 4)."""
+    parts = [int(x) for x in s.strip().split(".")]
+    while len(parts) < 4:
+        parts.append(0)
+    return tuple(parts[:4])
+
+def create_version_file():
+    """Create version_info.txt for Windows EXE (File Version / Product Version).
+    PyInstaller evals this file; only a VSVersionInfo(...) expression is allowed (no imports).
+    """
+    v = _version_to_tuple(APP_VERSION)
+    vstr = ".".join(str(x) for x in v)
+    path = Path("version_info.txt")
+    # Output must be eval-able only. VSVersionInfo etc. come from PyInstaller's versioninfo namespace.
+    content = f"""VSVersionInfo(
+  ffi=FixedFileInfo(
+    filevers=({v[0]}, {v[1]}, {v[2]}, {v[3]}),
+    prodvers=({v[0]}, {v[1]}, {v[2]}, {v[3]}),
+    mask=0x3f,
+    flags=0x0,
+    OS=0x40004,
+    fileType=0x1,
+    subtype=0x0,
+    date=(0, 0)
+  ),
+  kids=[
+    StringFileInfo([
+      StringTable(
+        '040904B0',
+        [
+          StringStruct('CompanyName', 'Pokok Kuning'),
+          StringStruct('FileDescription', 'Pokok Kuning Desktop App'),
+          StringStruct('FileVersion', '{vstr}'),
+          StringStruct('InternalName', 'PokokKuningApp'),
+          StringStruct('LegalCopyright', 'Copyright (C) Pokok Kuning'),
+          StringStruct('OriginalFilename', 'PokokKuningApp.exe'),
+          StringStruct('ProductName', 'Pokok Kuning Desktop App'),
+          StringStruct('ProductVersion', '{vstr}'),
+        ]
+      )
+    ]),
+    VarFileInfo([VarStruct('Translation', [1033, 1200])])
+  ]
+)
+"""
+    path.write_text(content, encoding="utf-8")
+    print(f"✅ Created version file: {path} (version {vstr})")
+    return path
 
 def create_optimized_spec_file():
     """Create optimized spec file with minimal essential imports"""
@@ -274,6 +328,7 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     icon='assets/img/logo.ico' if os.path.exists('assets/img/logo.ico') else None,
+    version='version_info.txt',
 )
 
 coll = COLLECT(
@@ -519,6 +574,7 @@ def main():
     
     # 2. Create optimized files
     print("\n📝 Creating optimized build files...")
+    create_version_file()
     create_optimized_spec_file()
     create_optimized_hook()
     

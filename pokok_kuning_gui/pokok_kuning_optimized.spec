@@ -229,6 +229,7 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     icon='assets/img/logo.ico' if os.path.exists('assets/img/logo.ico') else None,
+    version='version_info.txt',
 )
 
 coll = COLLECT(

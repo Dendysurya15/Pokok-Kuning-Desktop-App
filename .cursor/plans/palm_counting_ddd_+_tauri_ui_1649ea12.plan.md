@@ -19,7 +19,7 @@ todos:
     status: in_progress
   - id: yolomodel-menu
     content: YOLO Model library UI (list, Add, Remove, Set default) + Rust add/remove/set_active_model
-    status: pending
+    status: in_progress
   - id: integration-test
     content: Integrasi end-to-end, test run processing, deploy
     status: pending

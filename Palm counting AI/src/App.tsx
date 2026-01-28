@@ -1,51 +1,34 @@
-import { useState } from "preact/hooks";
-import preactLogo from "./assets/preact.svg";
-import { invoke } from "@tauri-apps/api/core";
-import "./App.css";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Dashboard, YoloModelPage, SettingsPage } from "@/pages";
 
-function App() {
-  const [greetMsg, setGreetMsg] = useState("");
-  const [name, setName] = useState("");
-
-  async function greet() {
-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    setGreetMsg(await invoke("greet", { name }));
-  }
-
+export default function App() {
   return (
-    <main class="container">
-      <h1>Welcome to Tauri + Preact</h1>
-
-      <div class="row">
-        <a href="https://vite.dev" target="_blank">
-          <img src="/vite.svg" class="logo vite" alt="Vite logo" />
-        </a>
-        <a href="https://tauri.app" target="_blank">
-          <img src="/tauri.svg" class="logo tauri" alt="Tauri logo" />
-        </a>
-        <a href="https://preactjs.com" target="_blank">
-          <img src={preactLogo} class="logo preact" alt="Preact logo" />
-        </a>
-      </div>
-      <p>Click on the Tauri, Vite, and Preact logos to learn more.</p>
-
-      <form
-        class="row"
-        onSubmit={(e) => {
-          e.preventDefault();
-          greet();
-        }}
-      >
-        <input
-          id="greet-input"
-          onInput={(e) => setName(e.currentTarget.value)}
-          placeholder="Enter a name..."
-        />
-        <button type="submit">Greet</button>
-      </form>
-      <p>{greetMsg}</p>
-    </main>
+    <div className="min-h-screen bg-background">
+      <header className="border-b px-4 py-3">
+        <h1 className="text-lg font-semibold">Palm Counting AI</h1>
+      </header>
+      <Tabs defaultValue="dashboard" className="w-full">
+        <TabsList className="w-full justify-start rounded-none border-b bg-transparent p-0">
+          <TabsTrigger value="dashboard" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent">
+            Dashboard
+          </TabsTrigger>
+          <TabsTrigger value="yolo" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent">
+            YOLO Model
+          </TabsTrigger>
+          <TabsTrigger value="settings" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent">
+            Settings
+          </TabsTrigger>
+        </TabsList>
+        <TabsContent value="dashboard">
+          <Dashboard />
+        </TabsContent>
+        <TabsContent value="yolo">
+          <YoloModelPage />
+        </TabsContent>
+        <TabsContent value="settings">
+          <SettingsPage />
+        </TabsContent>
+      </Tabs>
+    </div>
   );
 }
-
-export default App;
