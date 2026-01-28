@@ -135,7 +135,7 @@ function ProcessingStrip() {
             <CardTitle className="text-base">Progress</CardTitle>
           </CardHeader>
           <CardContent className="space-y-2">
-            <Progress value={(progress.processed / progress.total) * 100} />
+            <Progress value={progress.total ? (progress.processed / progress.total) * 100 : 0} />
             <p className="text-sm">
               {progress.processed} / {progress.total} —{" "}
               {progress.current_file?.split(/[/\\]/).pop() ?? progress.current_file}{" "}

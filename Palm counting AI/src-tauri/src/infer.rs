@@ -149,7 +149,8 @@ pub fn run_processing_files(
 
     let mut cmd = if use_python {
         let mut c = Command::new("python");
-        c.arg(&worker_path);
+        c.arg("-u").arg(&worker_path);
+        c.env("PYTHONUNBUFFERED", "1");
         c
     } else {
         Command::new(&worker_path)

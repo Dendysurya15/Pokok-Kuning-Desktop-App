@@ -182,57 +182,31 @@ def infer_mode() -> None:
     conf = float(config.get("conf", 0.2))
     iou = float(config.get("iou", 0.2))
     max_det = int(config.get("max_det", 10000))
-    device_pref = config.get("device", "auto").lower()
     convert_kml = config.get("convert_kml", "false").lower() == "true"
     convert_shp = config.get("convert_shp", "false").lower() == "true"
     save_annotated = config.get("save_annotated", "true").lower() == "true"
     line_width = int(config.get("line_width", 3))
     show_labels = config.get("show_labels", "true").lower() == "true"
     show_conf = config.get("show_conf", "false").lower() == "true"
-    
+
     try:
         from ultralytics import YOLO
         import torch
-        
-        # Device selection
-        if device_pref == "cpu":
-            device = "cpu"
-            safe_print(f"Using CPU (user selection)")
-        elif device_pref == "cuda":
-            if torch.cuda.is_available():
-                device = "cuda"
-                safe_print(f"Using CUDA: {torch.cuda.get_device_name(0)}")
-            else:
-                device = "cpu"
-                safe_print(f"CUDA requested but not available, using CPU")
-        else:  # auto
-            if torch.cuda.is_available():
-                device = "cuda"
-                safe_print(f"Auto-detected CUDA: {torch.cuda.get_device_name(0)}")
-            else:
-                device = "cpu"
-                safe_print(f"CUDA not available, using CPU")
-        
-        # Load model
+
+        if not torch.cuda.is_available():
+            log_error("GPU (CUDA) is required. No CUDA device found.")
+            sys.exit(1)
+        device = "cuda"
+        safe_print(f"Using CUDA: {torch.cuda.get_device_name(0)}")
+
         safe_print(f"Loading YOLO model: {model_path}")
         model = YOLO(model_path)
-        
-        if device == "cuda":
-            try:
-                torch.cuda.empty_cache()
-                model.to(device)
-                # Test CUDA
-                test_tensor = torch.zeros(1, device='cuda')
-                del test_tensor
-                torch.cuda.synchronize()
-                safe_print(f"Model loaded on GPU successfully")
-            except Exception as e:
-                safe_print(f"CUDA error, falling back to CPU: {e}")
-                device = "cpu"
-                model = YOLO(model_path)
-        else:
-            safe_print(f"Model loaded on CPU")
-        
+        torch.cuda.empty_cache()
+        model.to(device)
+        test_tensor = torch.zeros(1, device="cuda")
+        del test_tensor
+        torch.cuda.synchronize()
+        safe_print("Model loaded on GPU successfully")
     except Exception as e:
         log_error(f"Failed to load model: {e}")
         import traceback
@@ -271,35 +245,18 @@ def infer_mode() -> None:
             # Use temp RGB image if created
             processing_path = temp_path if temp_path else image_path
             
-            # Run YOLO prediction
-            try:
-                results = model.predict(
-                    source=processing_path,
-                    imgsz=imgsz,
-                    conf=conf,
-                    iou=iou,
-                    max_det=max_det,
-                    device=device,
-                    verbose=False,
-                    save=False
-                )
-            except Exception as pred_error:
-                safe_print(f"  ⚠️  Prediction failed: {pred_error}")
-                if device == "cuda":
-                    safe_print(f"  Retrying on CPU...")
-                    results = model.predict(
-                        source=processing_path,
-                        imgsz=imgsz,
-                        conf=conf,
-                        iou=iou,
-                        max_det=max_det,
-                        device="cpu",
-                        verbose=False,
-                        save=False
-                    )
-                else:
-                    raise pred_error
-            
+            # Run YOLO prediction (GPU only)
+            results = model.predict(
+                source=processing_path,
+                imgsz=imgsz,
+                conf=conf,
+                iou=iou,
+                max_det=max_det,
+                device=device,
+                verbose=False,
+                save=False,
+            )
+
             # Count detections
             abnormal_count = 0
             normal_count = 0
@@ -497,8 +454,7 @@ def infer_mode() -> None:
             # Memory cleanup
             if (index + 1) % 5 == 0:
                 gc.collect()
-                if device == "cuda":
-                    torch.cuda.empty_cache()
+                torch.cuda.empty_cache()
             
             # Output progress as JSON (for Rust to parse)
             progress = {
@@ -580,7 +536,6 @@ def infer_files_mode() -> None:
     conf = float(config.get("conf", 0.2))
     iou = float(config.get("iou", 0.2))
     max_det = int(config.get("max_det", 10000))
-    device_pref = config.get("device", "auto").lower()
     convert_kml = config.get("convert_kml", "false").lower() == "true"
     convert_shp = config.get("convert_shp", "false").lower() == "true"
     save_annotated = config.get("save_annotated", "true").lower() == "true"
@@ -590,28 +545,17 @@ def infer_files_mode() -> None:
     try:
         from ultralytics import YOLO
         import torch
-        if device_pref == "cpu":
-            device = "cpu"
-            safe_print("Using CPU (user selection)")
-        elif device_pref == "cuda":
-            device = "cuda" if torch.cuda.is_available() else "cpu"
-            safe_print(f"Using CUDA: {torch.cuda.get_device_name(0)}" if device == "cuda" else "CUDA requested but not available, using CPU")
-        else:
-            device = "cuda" if torch.cuda.is_available() else "cpu"
-            safe_print(f"Auto-detected CUDA: {torch.cuda.get_device_name(0)}" if device == "cuda" else "CUDA not available, using CPU")
+
+        if not torch.cuda.is_available():
+            log_error("GPU (CUDA) is required. No CUDA device found.")
+            sys.exit(1)
+        device = "cuda"
+        safe_print(f"Using CUDA: {torch.cuda.get_device_name(0)}")
         safe_print(f"Loading YOLO model: {model_path}")
         model = YOLO(model_path)
-        if device == "cuda":
-            try:
-                torch.cuda.empty_cache()
-                model.to(device)
-                safe_print("Model loaded on GPU successfully")
-            except Exception as e:
-                safe_print(f"CUDA error, falling back to CPU: {e}")
-                device = "cpu"
-                model = YOLO(model_path)
-        else:
-            safe_print("Model loaded on CPU")
+        torch.cuda.empty_cache()
+        model.to(device)
+        safe_print("Model loaded on GPU successfully")
     except Exception as e:
         log_error(f"Failed to load model: {e}")
         import traceback
@@ -640,6 +584,7 @@ def infer_files_mode() -> None:
         image_file = os.path.basename(image_path)
         safe_print(f"Processing [{index + 1}/{total_files}]: {image_file}")
         try:
+            safe_print("  [1/4] Validating image...")
             is_valid, width, height, mode, temp_path = validate_and_preprocess_image(image_path)
             if not is_valid:
                 safe_print("  ✗ Invalid image")
@@ -651,21 +596,60 @@ def infer_files_mode() -> None:
                 }), flush=True)
                 continue
             processing_path = temp_path if temp_path else image_path
-            try:
-                results = model.predict(
-                    source=processing_path, imgsz=imgsz, conf=conf, iou=iou,
-                    max_det=max_det, device=device, verbose=False, save=False
+            def _emit_inference_progress(batch_num: int) -> None:
+                safe_print(f"  [2/4] Inference batch {batch_num}...")
+                print(
+                    json.dumps(
+                        {
+                            "processed": index,
+                            "total": total_files,
+                            "current_file": image_path,
+                            "status": f"Inference batch {batch_num}...",
+                            "abnormal_count": 0,
+                            "normal_count": 0,
+                            "successful": successful,
+                            "failed": failed,
+                            "output_folder": None,
+                        }
+                    ),
+                    flush=True,
                 )
-            except Exception as pred_error:
-                safe_print(f"  ⚠️  Prediction failed: {pred_error}")
-                if device == "cuda":
-                    safe_print("  Retrying on CPU...")
-                    results = model.predict(
-                        source=processing_path, imgsz=imgsz, conf=conf, iou=iou,
-                        max_det=max_det, device="cpu", verbose=False, save=False
-                    )
-                else:
-                    raise pred_error
+
+            safe_print("  [2/4] Running YOLO inference... (large images may take several minutes)")
+            results = []
+            for batch_num, r in enumerate(
+                model.predict(
+                    source=processing_path,
+                    imgsz=imgsz,
+                    conf=conf,
+                    iou=iou,
+                    max_det=max_det,
+                    device=device,
+                    verbose=False,
+                    save=False,
+                    stream=True,
+                ),
+                1,
+            ):
+                results.append(r)
+                _emit_inference_progress(batch_num)
+            safe_print("  [3/4] Inference done. Generating GeoJSON & outputs...")
+            print(
+                json.dumps(
+                    {
+                        "processed": index,
+                        "total": total_files,
+                        "current_file": image_path,
+                        "status": "Generating GeoJSON & outputs...",
+                        "abnormal_count": 0,
+                        "normal_count": 0,
+                        "successful": successful,
+                        "failed": failed,
+                        "output_folder": None,
+                    }
+                ),
+                flush=True,
+            )
             abnormal_count = 0
             normal_count = 0
             detections_list = []
@@ -806,8 +790,7 @@ def infer_files_mode() -> None:
             }), flush=True)
         if (index + 1) % 5 == 0:
             gc.collect()
-            if device == "cuda":
-                torch.cuda.empty_cache()
+            torch.cuda.empty_cache()
     summary = {
         "done": True, "successful": successful, "failed": failed, "total": total_files,
         "total_abnormal": total_abnormal, "total_normal": total_normal,
