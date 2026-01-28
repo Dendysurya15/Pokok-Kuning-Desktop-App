@@ -37,10 +37,29 @@ cd "Palm counting AI"
 npm run tauri build
 ```
 
-Atau untuk development:
+### Development Mode
+
+**Cara 1: Otomatis (Recommended)**
 ```bash
+npm run tauri:dev
+```
+Script ini akan:
+- Otomatis build placeholder sidecar (jika belum ada)
+- Menjalankan Tauri dev mode
+
+**Cara 2: Manual**
+```bash
+# Build placeholder dulu (hanya sekali, atau jika dihapus)
+npm run build:placeholder
+
+# Lalu jalankan dev
 npm run tauri dev
 ```
+
+**Catatan:**
+- Placeholder sidecar akan **otomatis dibuat** saat pertama kali run `npm run tauri:dev`
+- Placeholder hanya file kecil (~1KB) untuk memenuhi requirement Tauri `externalBin`
+- Untuk **production**, gunakan `npm run build:sidecar` untuk build sidecar yang sebenarnya
 
 ### 4. Hasil Build
 
@@ -64,9 +83,10 @@ src-tauri/
 ## Alur Runtime
 
 ### Development Mode
-1. Rust mencari `python_ai/infer_worker.py`
-2. Menjalankan dengan `python infer_worker.py`
-3. Memerlukan Python + dependencies terinstall
+1. Tauri akan otomatis build placeholder sidecar saat pertama kali dev
+2. Placeholder hanya untuk memenuhi requirement `externalBin` di Tauri config
+3. Untuk conversion `.pt` ke `.onnx`, aplikasi akan menggunakan sidecar yang sebenarnya (jika sudah dibuild) atau fallback ke Python script
+4. **Inference menggunakan Rust ONNX** - tidak perlu Python untuk inference
 
 ### Production Mode (Sidecar)
 1. Rust mencari `binaries/infer_worker-<target>.exe`

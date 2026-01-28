@@ -28,9 +28,8 @@ def get_target_triple():
 def build_python_sidecar():
     """Build Python worker sebagai standalone executable dengan PyInstaller"""
     script_dir = Path(__file__).parent
-    project_root = script_dir.parent
-    python_ai_dir = project_root / "python_ai"
-    src_tauri_dir = project_root / "src-tauri"
+    src_tauri_dir = script_dir.parent  # scripts/ -> src-tauri/
+    python_ai_dir = src_tauri_dir / "python_ai"  # python_ai sekarang di src-tauri/
     binaries_dir = src_tauri_dir / "binaries"
     
     # Buat direktori binaries jika belum ada

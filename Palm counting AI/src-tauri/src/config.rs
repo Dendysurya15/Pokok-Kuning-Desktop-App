@@ -286,10 +286,25 @@ pub fn add_model(name: String, source_path: &Path) -> Result<YoloModel, Box<dyn 
             .unwrap_or(1280);
         
         // Try to use sidecar Python worker for conversion
-        let sidecar_path = get_sidecar_python_path();
-        let conversion_success = if sidecar_path.exists() {
+        let (converter_path, use_python) = get_converter_path();
+        eprintln!("Converter path: {} (use_python: {})", converter_path.display(), use_python);
+        eprintln!("Converter exists: {}", converter_path.exists());
+        
+        let conversion_success = if converter_path.exists() {
             // Use sidecar Python worker with --convert mode
-            let output = std::process::Command::new(&sidecar_path)
+            let mut cmd = if use_python {
+                // Fallback to Python script for dev mode
+                eprintln!("Using Python command: python {}", converter_path.display());
+                let mut c = std::process::Command::new("python");
+                c.arg(&converter_path);
+                c
+            } else {
+                // Use sidecar executable
+                eprintln!("Using sidecar executable: {}", converter_path.display());
+                std::process::Command::new(&converter_path)
+            };
+            
+            let output = cmd
                 .arg("--convert")
                 .arg(&pt_dest)
                 .arg(&onnx_dest)
@@ -298,22 +313,29 @@ pub fn add_model(name: String, source_path: &Path) -> Result<YoloModel, Box<dyn 
             
             match output {
                 Ok(o) if o.status.success() && onnx_dest.exists() => {
+                    eprintln!("Conversion successful!");
                     true
                 }
                 Ok(o) => {
                     // Log stderr if available
+                    let stdout = String::from_utf8_lossy(&o.stdout);
                     let stderr = String::from_utf8_lossy(&o.stderr);
+                    eprintln!("Conversion failed. Exit code: {}", o.status.code().unwrap_or(-1));
+                    if !stdout.is_empty() {
+                        eprintln!("Conversion stdout: {}", stdout);
+                    }
                     if !stderr.is_empty() {
                         eprintln!("Conversion stderr: {}", stderr);
                     }
                     false
                 }
                 Err(e) => {
-                    eprintln!("Failed to run sidecar for conversion: {}", e);
+                    eprintln!("Failed to run converter for conversion: {}", e);
                     false
                 }
             }
         } else {
+            eprintln!("Converter path does not exist: {}", converter_path.display());
             false
         };
         
@@ -362,42 +384,106 @@ pub fn add_model(name: String, source_path: &Path) -> Result<YoloModel, Box<dyn 
     })
 }
 
-/// Get Python sidecar path (hanya sidecar, tidak ada fallback)
-fn get_sidecar_python_path() -> PathBuf {
-    // Hanya gunakan sidecar (tidak ada fallback ke Python script)
+/// Get converter path (sidecar atau Python script untuk dev mode)
+/// Returns (path, use_python_command)
+fn get_converter_path() -> (PathBuf, bool) {
+    // Cari sidecar yang valid terlebih dahulu
+    // Untuk dev mode, executable di target/debug/, sidecar di src-tauri/binaries/
     if let Ok(exe) = std::env::current_exe() {
         if let Some(exe_dir) = exe.parent() {
-            // Sidecar biasanya di directory yang sama dengan executable
-            let sidecar = exe_dir.join("infer_worker.exe");
-            if sidecar.exists() {
-                // Check if it's a valid sidecar (not placeholder)
-                if let Ok(metadata) = std::fs::metadata(&sidecar) {
-                    if metadata.len() > 1_000_000 {
-                        return sidecar;
+            // Cek di src-tauri/binaries/ (untuk dev mode)
+            // target/debug/ -> target/ -> src-tauri/ -> binaries/
+            if let Some(target_dir) = exe_dir.parent() {
+                if let Some(src_tauri_dir) = target_dir.parent() {
+                    let sidecar_bin = src_tauri_dir.join("binaries").join("infer_worker-x86_64-pc-windows-msvc.exe");
+                    if sidecar_bin.exists() {
+                        if let Ok(metadata) = std::fs::metadata(&sidecar_bin) {
+                            if metadata.len() > 1_000_000 {
+                                eprintln!("Using valid sidecar: {}", sidecar_bin.display());
+                                return (sidecar_bin, false);
+                            }
+                        }
                     }
                 }
             }
-            // Atau di subdirectory binaries
+            
+            // Cek di directory yang sama dengan executable (untuk production)
+            let sidecar = exe_dir.join("infer_worker.exe");
+            if sidecar.exists() {
+                if let Ok(metadata) = std::fs::metadata(&sidecar) {
+                    if metadata.len() > 1_000_000 {
+                        eprintln!("Using valid sidecar: {}", sidecar.display());
+                        return (sidecar, false);
+                    }
+                }
+            }
+            
+            // Cek di subdirectory binaries (untuk production)
             let sidecar_bin = exe_dir.join("binaries").join("infer_worker.exe");
             if sidecar_bin.exists() {
                 if let Ok(metadata) = std::fs::metadata(&sidecar_bin) {
                     if metadata.len() > 1_000_000 {
-                        return sidecar_bin;
+                        eprintln!("Using valid sidecar: {}", sidecar_bin.display());
+                        return (sidecar_bin, false);
                     }
                 }
             }
         }
     }
     
-    // Jika tidak ditemukan, return path yang diharapkan (untuk error message)
+    // Fallback ke Python script untuk dev mode
+    // Cari python_ai/infer_worker.py di src-tauri/ (karena sudah dipindah ke src-tauri/)
+    // Untuk dev mode, executable di target/debug/, src-tauri/ adalah parent dari target/
     if let Ok(exe) = std::env::current_exe() {
         if let Some(exe_dir) = exe.parent() {
-            return exe_dir.join("infer_worker.exe");
+            // target/debug/ -> target/ -> src-tauri/
+            let possible_paths = vec![
+                // Dari target/debug/ -> target/ -> src-tauri/ -> python_ai/
+                exe_dir.parent().and_then(|p| p.parent()).map(|p| p.join("python_ai").join("infer_worker.py")),
+            ];
+            
+            for path_opt in possible_paths {
+                if let Some(path) = path_opt {
+                    if path.exists() {
+                        eprintln!("Using Python script for conversion: {}", path.display());
+                        return (path, true);
+                    }
+                }
+            }
         }
     }
     
-    // Fallback (tidak akan digunakan karena akan error sebelumnya)
-    PathBuf::from("infer_worker.exe")
+    // Fallback: coba dari current working directory (biasanya project root saat dev)
+    // Tapi sekarang python_ai ada di src-tauri/, jadi coba src-tauri/python_ai/
+    if let Ok(cwd) = std::env::current_dir() {
+        // Coba dari project root -> src-tauri/python_ai/
+        let fallback1 = cwd.join("src-tauri").join("python_ai").join("infer_worker.py");
+        if fallback1.exists() {
+            eprintln!("Using Python script for conversion (from CWD/src-tauri): {}", fallback1.display());
+            return (fallback1, true);
+        }
+        // Atau langsung dari CWD jika CWD adalah src-tauri/
+        let fallback2 = cwd.join("python_ai").join("infer_worker.py");
+        if fallback2.exists() {
+            eprintln!("Using Python script for conversion (from CWD): {}", fallback2.display());
+            return (fallback2, true);
+        }
+    }
+    
+    // Jika tidak ditemukan, return path yang diharapkan (untuk error message)
+    eprintln!("WARNING: No converter found, will try Python script from src-tauri/python_ai/");
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(exe_dir) = exe.parent() {
+            if let Some(target_dir) = exe_dir.parent() {
+                if let Some(src_tauri_dir) = target_dir.parent() {
+                    let python_script = src_tauri_dir.join("python_ai").join("infer_worker.py");
+                    return (python_script, true);
+                }
+            }
+        }
+    }
+    
+    (PathBuf::from("src-tauri/python_ai/infer_worker.py"), true)
 }
 
 fn unique_path_with_ext(p: &PathBuf, ext: &str) -> PathBuf {
@@ -446,10 +532,6 @@ pub fn set_active_model(id: i64) -> Result<(), Box<dyn std::error::Error + Send 
     let mut c = load_config()?;
     c.active_model_id = Some(id);
     save_config(&c)
-}
-
-pub fn get_models_dir() -> PathBuf {
-    models_dir()
 }
 
 pub fn get_active_model_path() -> Result<Option<String>, Box<dyn std::error::Error + Send + Sync>> {

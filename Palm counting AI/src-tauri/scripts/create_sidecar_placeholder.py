@@ -8,8 +8,7 @@ from pathlib import Path
 def create_placeholder():
     """Create placeholder sidecar file untuk development"""
     script_dir = Path(__file__).parent
-    project_root = script_dir.parent
-    src_tauri_dir = project_root / "src-tauri"
+    src_tauri_dir = script_dir.parent  # scripts/ -> src-tauri/
     binaries_dir = src_tauri_dir / "binaries"
     
     # Buat direktori jika belum ada
@@ -41,9 +40,18 @@ def create_placeholder():
     
     placeholder_path = binaries_dir / placeholder_name
     
+    # Check if valid sidecar exists (not just placeholder)
     if placeholder_path.exists():
-        print(f"Placeholder sudah ada: {placeholder_path}")
-        return True
+        try:
+            size = placeholder_path.stat().st_size
+            # Jika file > 1MB, kemungkinan adalah sidecar yang sebenarnya (bukan placeholder)
+            if size > 1_000_000:
+                print(f"✓ Sidecar sudah ada: {placeholder_path} ({size / (1024*1024):.2f} MB)")
+                return True
+            else:
+                print(f"Placeholder ditemukan, akan diupdate jika perlu: {placeholder_path}")
+        except Exception:
+            pass
     
     # Create minimal executable placeholder
     # Untuk Windows, buat file kosong (Tauri akan skip jika tidak bisa dijalankan)
