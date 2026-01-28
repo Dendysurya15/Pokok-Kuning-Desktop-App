@@ -15,7 +15,8 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
-import { FolderOpen, Trash2 } from "lucide-react";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { FolderOpen, Trash2, Plus, Play } from "lucide-react";
 import { useProcessingStore } from "@/stores/processing";
 
 interface SystemSpecs {
@@ -159,54 +160,88 @@ export function Dashboard() {
   };
 
   return (
-    <div className="space-y-4 p-4">
-      <div className="grid gap-4 md:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle>Status</CardTitle>
+    <div className="space-y-6 p-6">
+      <div className="grid gap-6 md:grid-cols-2">
+        <Card className="border-border/50">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">Status</CardTitle>
+            <p className="text-xs text-muted-foreground">
+              System specs and processing state
+            </p>
           </CardHeader>
-          <CardContent className="space-y-2 text-sm">
+          <CardContent className="space-y-3 text-sm">
             {specs && (
-              <>
-                <p>OS: {specs.os}</p>
-                <p>CPU: {specs.cpu_cores}C / {specs.cpu_threads}T</p>
-                <p>RAM: {specs.total_ram_gb}</p>
-                <p>
-                  GPU:{" "}
-                  <Badge
-                    variant={
-                      specs.gpu.includes("No") ? "destructive" : "default"
-                    }
-                  >
-                    {specs.gpu} {specs.gpu_memory}
-                  </Badge>
-                </p>
-              </>
+              <dl className="grid gap-1.5">
+                <div className="flex justify-between gap-2">
+                  <dt className="text-muted-foreground">OS</dt>
+                  <dd className="font-medium">{specs.os}</dd>
+                </div>
+                <div className="flex justify-between gap-2">
+                  <dt className="text-muted-foreground">CPU</dt>
+                  <dd className="font-medium">
+                    {specs.cpu_cores}C / {specs.cpu_threads}T
+                  </dd>
+                </div>
+                <div className="flex justify-between gap-2">
+                  <dt className="text-muted-foreground">RAM</dt>
+                  <dd className="font-medium">{specs.total_ram_gb}</dd>
+                </div>
+                <div className="flex justify-between gap-2 items-center">
+                  <dt className="text-muted-foreground">GPU</dt>
+                  <dd>
+                    <Badge
+                      variant={
+                        specs.gpu.includes("No") ? "destructive" : "default"
+                      }
+                      className="text-xs"
+                    >
+                      {specs.gpu} {specs.gpu_memory}
+                    </Badge>
+                  </dd>
+                </div>
+              </dl>
             )}
-            <p>TIFF files: {tiffList.length}</p>
-            <p>Process: {running ? "Running" : "Idle"}</p>
+            <div className="flex justify-between gap-2 pt-1 border-t border-border/50">
+              <span className="text-muted-foreground">TIFF files</span>
+              <span className="font-medium">{tiffList.length}</span>
+            </div>
+            <div className="flex justify-between gap-2">
+              <span className="text-muted-foreground">Process</span>
+              <Badge variant={running ? "default" : "secondary"} className="text-xs">
+                {running ? "Running" : "Idle"}
+              </Badge>
+            </div>
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>File &amp; Model</CardTitle>
+        <Card className="border-border/50">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">File &amp; Model</CardTitle>
+            <p className="text-xs text-muted-foreground">
+              Select TIFFs, choose a model, then run
+            </p>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="space-y-2">
-              <Label>TIFF files</Label>
-              <div className="flex gap-2">
-                <Button
-                  variant="outline"
-                  onClick={pickTiff}
-                  disabled={running}
-                >
-                  Pick TIFF
-                </Button>
-              </div>
+              <Label className="text-sm font-medium">TIFF files</Label>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={pickTiff}
+                    disabled={running}
+                    className="gap-2"
+                  >
+                    <Plus className="h-4 w-4" />
+                    Add TIFF
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Pick .tif / .tiff files to process</TooltipContent>
+              </Tooltip>
             </div>
             <div className="space-y-2">
-              <Label>YOLO Model</Label>
+              <Label className="text-sm font-medium">YOLO Model</Label>
               <Select
                 value={activeModelId}
                 onValueChange={(v) => {
@@ -243,12 +278,12 @@ export function Dashboard() {
                     Select all ({checkedCount} selected)
                   </Label>
                 </div>
-                <ScrollArea className="h-32 rounded border p-2">
+                <ScrollArea className="h-36 rounded-lg border border-border/50 bg-muted/20 p-2">
                   <div className="space-y-1.5">
                     {tiffList.map((t) => (
                       <div
                         key={t.path}
-                        className="flex items-center gap-2 text-sm"
+                        className="flex items-center gap-2 text-sm rounded-md px-2 py-1.5 hover:bg-muted/50"
                       >
                         <Checkbox
                           checked={t.checked}
@@ -256,46 +291,67 @@ export function Dashboard() {
                           disabled={running}
                         />
                         <span
-                          className="flex-1 truncate font-mono"
+                          className="flex-1 truncate font-mono text-xs"
                           title={t.path}
                         >
                           {t.path.split(/[/\\]/).pop() ?? t.path}
                         </span>
                         {outputFolders[t.path] && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="shrink-0 h-7 px-2"
-                            onClick={() => openResultFolder(t.path)}
-                            title="Open result folder"
-                          >
-                            <FolderOpen className="h-4 w-4" />
-                          </Button>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7 shrink-0"
+                                onClick={() => openResultFolder(t.path)}
+                              >
+                                <FolderOpen className="h-4 w-4" />
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>Open result folder</TooltipContent>
+                          </Tooltip>
                         )}
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="shrink-0 h-7 px-2 text-muted-foreground hover:text-destructive"
-                          onClick={() => removeTiff(t.path)}
-                          disabled={running}
-                          title="Remove from list"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7 shrink-0 text-muted-foreground hover:text-destructive"
+                              onClick={() => removeTiff(t.path)}
+                              disabled={running}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>Remove from list</TooltipContent>
+                        </Tooltip>
                       </div>
                     ))}
                   </div>
                 </ScrollArea>
               </div>
             )}
-            <div className="flex gap-2">
-              <Button
-                onClick={run}
-                disabled={running || !activeModelId || !someChecked}
-              >
-                Run processing
-              </Button>
-            </div>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="inline-block">
+                  <Button
+                    onClick={run}
+                    disabled={running || !activeModelId || !someChecked}
+                    className="gap-2"
+                  >
+                    <Play className="h-4 w-4" />
+                    Run processing
+                  </Button>
+                </span>
+              </TooltipTrigger>
+              <TooltipContent>
+                {!activeModelId
+                  ? "Select an active YOLO model first"
+                  : !someChecked
+                    ? "Select at least one TIFF to process"
+                    : "Process selected TIFFs with the active model"}
+              </TooltipContent>
+            </Tooltip>
           </CardContent>
         </Card>
       </div>

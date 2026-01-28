@@ -1,16 +1,117 @@
 import { useEffect } from "react";
 import { listen } from "@tauri-apps/api/event";
+import {
+  isPermissionGranted,
+  requestPermission,
+  sendNotification,
+} from "@tauri-apps/plugin-notification";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import { Dashboard, YoloModelPage, SettingsPage } from "@/pages";
 import { useConversionStore } from "@/stores/conversion";
 import {
   useProcessingStore,
   type ProcessingProgress,
 } from "@/stores/processing";
+import { applyTheme, useThemeStore, type Theme } from "@/stores/theme";
+import { Sun, Moon, Monitor } from "lucide-react";
+
+interface DonePayload {
+  successful: number;
+  failed: number;
+  total: number;
+  total_abnormal: number;
+  total_normal: number;
+}
+
+async function sendProcessingDoneNotification(p: DonePayload) {
+  let granted = await isPermissionGranted();
+  if (!granted) {
+    const perm = await requestPermission();
+    granted = perm === "granted";
+  }
+  if (!granted) return;
+  let body: string;
+  if (p.total === 0) {
+    body = "Processing selesai.";
+  } else {
+    const parts: string[] = [];
+    if (p.successful > 0) parts.push(`${p.successful} berhasil`);
+    if (p.failed > 0) parts.push(`${p.failed} gagal`);
+    const summary = parts.length ? parts.join(", ") + "." : "Selesai.";
+    const counts =
+      p.total_abnormal > 0 || p.total_normal > 0
+        ? ` Abnormal: ${p.total_abnormal}, Normal: ${p.total_normal}.`
+        : "";
+    body = `${summary} ${counts}`.trim();
+  }
+  sendNotification({ title: "Palm Counting AI", body });
+}
+
+function ThemeToggle() {
+  const theme = useThemeStore((s) => s.theme);
+  const setTheme = useThemeStore((s) => s.setTheme);
+  const icon =
+    theme === "dark" ? (
+      <Moon className="h-4 w-4" />
+    ) : theme === "light" ? (
+      <Sun className="h-4 w-4" />
+    ) : (
+      <Monitor className="h-4 w-4" />
+    );
+
+  return (
+    <DropdownMenu modal={false}>
+      <DropdownMenuTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-9 w-9"
+          aria-label="Theme (Light / Dark / System)"
+          title="Theme: Light, Dark, System"
+        >
+          {icon}
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent
+        align="end"
+        side="bottom"
+        sideOffset={6}
+        className="w-44 z-100"
+        avoidCollisions
+      >
+        <DropdownMenuRadioGroup
+          value={theme}
+          onValueChange={(v) => setTheme(v as Theme)}
+        >
+          <DropdownMenuRadioItem value="light">
+            <Sun className="mr-2 h-4 w-4" />
+            Light
+          </DropdownMenuRadioItem>
+          <DropdownMenuRadioItem value="dark">
+            <Moon className="mr-2 h-4 w-4" />
+            Dark
+          </DropdownMenuRadioItem>
+          <DropdownMenuRadioItem value="system">
+            <Monitor className="mr-2 h-4 w-4" />
+            System
+          </DropdownMenuRadioItem>
+        </DropdownMenuRadioGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
 
 function ProcessingStrip() {
   const running = useProcessingStore((s) => s.running);
@@ -29,8 +130,8 @@ function ProcessingStrip() {
         </Button>
       </div>
       {progress && (
-        <Card>
-          <CardHeader>
+        <Card className="border-border/50">
+          <CardHeader className="pb-2">
             <CardTitle className="text-base">Progress</CardTitle>
           </CardHeader>
           <CardContent className="space-y-2">
@@ -47,7 +148,7 @@ function ProcessingStrip() {
           </CardContent>
         </Card>
       )}
-      <Card>
+      <Card className="border-border/50">
         <CardHeader className="flex flex-row items-center justify-between py-2">
           <CardTitle className="text-base">Log</CardTitle>
           <Button variant="ghost" size="sm" onClick={clearLog}>
@@ -55,7 +156,7 @@ function ProcessingStrip() {
           </Button>
         </CardHeader>
         <CardContent className="py-2">
-          <ScrollArea className="h-40 rounded border p-2 font-mono text-xs">
+          <ScrollArea className="h-40 rounded-lg border border-border/50 bg-muted/20 p-2 font-mono text-xs">
             {log.map((line, i) => (
               <div key={i}>{line}</div>
             ))}
@@ -141,7 +242,10 @@ export default function App() {
       }
       unsubs.push(u);
 
-      u = await listen("processing-done", () => setRunning(false));
+      u = await listen<DonePayload>("processing-done", (e) => {
+        setRunning(false);
+        sendProcessingDoneNotification(e.payload).catch(() => {});
+      });
       if (cancelled) {
         u();
         return;
@@ -156,46 +260,62 @@ export default function App() {
     };
   }, []);
 
+  useEffect(() => {
+    const theme = useThemeStore.getState().theme;
+    if (theme !== "system") return;
+    const m = window.matchMedia("(prefers-color-scheme: dark)");
+    const handler = () => applyTheme("system");
+    m.addEventListener("change", handler);
+    return () => m.removeEventListener("change", handler);
+  }, []);
+
   return (
-    <div className="min-h-screen bg-background">
-      <header className="border-b px-4 py-3">
-        <h1 className="text-lg font-semibold">Palm Counting AI</h1>
-      </header>
-      <Tabs defaultValue="dashboard" className="w-full">
-        <TabsList className="w-full justify-start rounded-none border-b bg-transparent p-0">
-          <TabsTrigger
-            value="dashboard"
-            className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent"
-          >
-            Dashboard
-          </TabsTrigger>
-          <TabsTrigger
-            value="yolo"
-            className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent"
-          >
-            YOLO Model
-          </TabsTrigger>
-          <TabsTrigger
-            value="settings"
-            className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent"
-          >
-            Settings
-          </TabsTrigger>
-        </TabsList>
-        <TabsContent value="dashboard">
-          <Dashboard />
-        </TabsContent>
-        <TabsContent value="yolo">
-          <YoloModelPage />
-        </TabsContent>
-        <TabsContent value="settings">
-          <SettingsPage />
-        </TabsContent>
-      </Tabs>
-      <ProcessingStrip />
-      <footer className="border-t px-4 py-2 text-center text-xs text-muted-foreground">
-        © 2026–present Digital Architect. All rights reserved.
-      </footer>
-    </div>
+    <TooltipProvider delayDuration={300}>
+      <div className="min-h-screen bg-background text-foreground flex flex-col">
+        <header className="sticky top-0 z-10 border-b bg-background/95 backdrop-blur supports-backdrop-filter:bg-background/60">
+          <div className="flex h-14 items-center justify-between px-4">
+            <h1 className="text-lg font-semibold tracking-tight">
+              Palm Counting AI
+            </h1>
+            <ThemeToggle />
+          </div>
+        </header>
+        <Tabs defaultValue="dashboard" className="flex flex-1 flex-col">
+          <TabsList className="h-11 w-full justify-start gap-0 rounded-none border-b bg-transparent px-4 py-0">
+            <TabsTrigger
+              value="dashboard"
+              className="rounded-none border-b-2 border-transparent px-6 data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none"
+            >
+              Dashboard
+            </TabsTrigger>
+            <TabsTrigger
+              value="yolo"
+              className="rounded-none border-b-2 border-transparent px-6 data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none"
+            >
+              YOLO Model
+            </TabsTrigger>
+            <TabsTrigger
+              value="settings"
+              className="rounded-none border-b-2 border-transparent px-6 data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none"
+            >
+              Settings
+            </TabsTrigger>
+          </TabsList>
+          <TabsContent value="dashboard" className="mt-0 flex-1 data-[state=inactive]:hidden">
+            <Dashboard />
+          </TabsContent>
+          <TabsContent value="yolo" className="mt-0 flex-1 data-[state=inactive]:hidden">
+            <YoloModelPage />
+          </TabsContent>
+          <TabsContent value="settings" className="mt-0 flex-1 data-[state=inactive]:hidden">
+            <SettingsPage />
+          </TabsContent>
+        </Tabs>
+        <ProcessingStrip />
+        <footer className="mt-auto border-t bg-muted/30 px-4 py-3 text-center text-xs text-muted-foreground">
+          © 2026–present Digital Architect. All rights reserved.
+        </footer>
+      </div>
+    </TooltipProvider>
   );
 }
