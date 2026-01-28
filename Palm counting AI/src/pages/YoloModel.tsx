@@ -14,7 +14,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Loader2 } from "lucide-react";
-import { useConversionStatus, updateConversionStatus } from "@/App";
+import { useConversionStore } from "@/stores/conversion";
 
 interface YoloModel {
   id: number;
@@ -25,7 +25,9 @@ interface YoloModel {
 
 export function YoloModelPage() {
   const [models, setModels] = useState<YoloModel[]>([]);
-  const { conversionStatus, isAdding } = useConversionStatus();
+  const status = useConversionStore((s) => s.status);
+  const isAdding = useConversionStore((s) => s.isAdding);
+  const setStatus = useConversionStore((s) => s.setStatus);
 
   const load = useCallback(async () => {
     try {
@@ -51,28 +53,24 @@ export function YoloModelPage() {
     const files = Array.isArray(selected) ? selected : [selected];
     if (files.length === 0) return;
     
-    updateConversionStatus(null, true);
-    
+    setStatus(null, true);
+
     try {
       if (files.length === 1) {
-        // Single file - use existing command
         await invoke("add_model_cmd", { sourcePath: files[0], name: undefined });
       } else {
-        // Multiple files - use new command
         await invoke("add_models_cmd", { sourcePaths: files });
       }
       await load();
     } catch (e) {
       console.error(e);
-      updateConversionStatus(`Error: ${e}`, false);
-      setTimeout(() => updateConversionStatus(null, false), 5000);
+      setStatus(`Error: ${e}`, false);
+      setTimeout(() => setStatus(null, false), 5000);
     } finally {
-      // Don't immediately clear status for multiple files - let the final summary show
       if (files.length === 1) {
-        updateConversionStatus(null, false);
+        setStatus(null, false);
       } else {
-        // For multiple files, wait a bit longer to show final summary
-        setTimeout(() => updateConversionStatus(null, false), 3000);
+        setTimeout(() => setStatus(null, false), 3000);
       }
     }
   };
@@ -112,29 +110,31 @@ export function YoloModelPage() {
           </Button>
         </CardHeader>
         <CardContent>
-          {conversionStatus && (
-            <div className={`mb-4 rounded-md p-3 ${
-              conversionStatus.startsWith("Error") 
-                ? "bg-destructive/10 border border-destructive/20" 
-                : conversionStatus.includes("Successfully")
-                ? "bg-green-500/10 border border-green-500/20"
-                : "bg-muted"
-            }`}>
+          {status && (
+            <div
+              className={`mb-4 rounded-md p-3 ${
+                status.startsWith("Error")
+                  ? "bg-destructive/10 border border-destructive/20"
+                  : status.includes("Successfully")
+                    ? "bg-green-500/10 border border-green-500/20"
+                    : "bg-muted"
+              }`}
+            >
               <div className="flex items-center gap-2">
                 {isAdding && <Loader2 className="h-4 w-4 animate-spin" />}
-                <p className={`text-sm ${
-                  conversionStatus.startsWith("Error") 
-                    ? "text-destructive" 
-                    : conversionStatus.includes("Successfully")
-                    ? "text-green-600"
-                    : ""
-                }`}>
-                  {conversionStatus}
+                <p
+                  className={`text-sm ${
+                    status.startsWith("Error")
+                      ? "text-destructive"
+                      : status.includes("Successfully")
+                        ? "text-green-600"
+                        : ""
+                  }`}
+                >
+                  {status}
                 </p>
               </div>
-              {isAdding && (
-                <Progress value={undefined} className="mt-2" />
-              )}
+              {isAdding && <Progress value={undefined} className="mt-2" />}
             </div>
           )}
           {models.length === 0 ? (

@@ -1,10 +1,9 @@
 import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
+import { openPath } from "@tauri-apps/plugin-opener";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -13,9 +12,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Progress } from "@/components/ui/progress";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
+import { FolderOpen, Trash2 } from "lucide-react";
+import { useProcessingStore } from "@/stores/processing";
 
 interface SystemSpecs {
   os: string;
@@ -45,98 +46,117 @@ interface AppConfig {
   last_folder_path?: string;
 }
 
-interface ProgressPayload {
-  processed: number;
-  total: number;
-  current_file: string;
-  status: string;
-  abnormal_count: number;
-  normal_count: number;
+interface TiffEntry {
+  path: string;
+  checked: boolean;
 }
 
 export function Dashboard() {
-  const [folder, setFolder] = useState("");
+  const running = useProcessingStore((s) => s.running);
+  const outputFolders = useProcessingStore((s) => s.outputFolders);
+  const startProcessing = useProcessingStore((s) => s.start);
+  const setRunning = useProcessingStore((s) => s.setRunning);
+  const appendLog = useProcessingStore((s) => s.appendLog);
+
+  const [tiffList, setTiffList] = useState<TiffEntry[]>([]);
   const [models, setModels] = useState<YoloModel[]>([]);
   const [activeModelId, setActiveModelId] = useState<string>("");
   const [, setConfig] = useState<AppConfig>({});
   const [specs, setSpecs] = useState<SystemSpecs | null>(null);
-  const [running, setRunning] = useState(false);
-  const [progress, setProgress] = useState<ProgressPayload | null>(null);
-  const [log, setLog] = useState<string[]>([]);
 
   const load = useCallback(async () => {
     try {
-      const [s, c, m] = await Promise.all([
+      const [s, c, m, tiffPaths] = await Promise.all([
         invoke<SystemSpecs>("get_specs"),
         invoke<AppConfig>("load_config_cmd").catch(() => ({})),
         invoke<YoloModel[]>("list_models_cmd").catch(() => []),
+        invoke<string[]>("list_tiff_paths_cmd").catch(() => []),
       ]);
       setSpecs(s);
       setConfig(c);
       setModels(m);
       const active = m.find((x) => x.is_active);
       setActiveModelId(active ? String(active.id) : "");
-      const cfg = c as AppConfig;
-      if (cfg?.last_folder_path) setFolder(cfg.last_folder_path);
+      setTiffList(
+        (tiffPaths as string[]).map((path) => ({ path, checked: false }))
+      );
     } catch (e) {
-      setLog((prev) => [...prev, `Error: ${e}`]);
+      appendLog(`Error: ${e}`);
     }
-  }, []);
+  }, [appendLog]);
 
   useEffect(() => {
     load();
   }, [load]);
 
-  useEffect(() => {
-    const unlistenLog = listen<string>("processing-log", (e) =>
-      setLog((prev) => [...prev, e.payload])
-    );
-    const unlistenProg = listen<ProgressPayload>("processing-progress", (e) =>
-      setProgress(e.payload)
-    );
-    const unlistenDone = listen("processing-done", () => {
-      setRunning(false);
-      setProgress(null);
-      load();
+  const pickTiff = async () => {
+    const selected = await open({
+      multiple: true,
+      filters: [{ name: "TIFF", extensions: ["tif", "tiff"] }],
     });
-    return () => {
-      unlistenLog.then((u) => u());
-      unlistenProg.then((u) => u());
-      unlistenDone.then((u) => u());
-    };
-  }, [load]);
-
-  const pickFolder = async () => {
-    const selected = await open({ directory: true, multiple: false });
-    if (!selected || typeof selected !== "string") return;
-    setFolder(selected);
+    if (!selected) return;
+    const files = Array.isArray(selected) ? selected : [selected];
+    const existing = new Set(tiffList.map((t) => t.path));
+    const toAdd = files.filter((p) => !existing.has(p));
+    if (toAdd.length === 0) return;
     try {
-      const c = await invoke<AppConfig>("load_config_cmd").catch(() => ({}));
-      await invoke("save_config_cmd", { c: { ...c, last_folder_path: selected } });
-    } catch {
-      /* ignore */
+      await invoke("add_tiff_paths_cmd", { paths: toAdd });
+      const added: TiffEntry[] = toAdd.map((path) => ({ path, checked: false }));
+      setTiffList((prev) => [...prev, ...added]);
+    } catch (e) {
+      appendLog(`Error saving TIFF list: ${e}`);
     }
   };
+
+  const removeTiff = async (path: string) => {
+    if (running) return;
+    try {
+      await invoke("remove_tiff_path_cmd", { path });
+      setTiffList((prev) => prev.filter((t) => t.path !== path));
+    } catch (e) {
+      appendLog(`Error removing: ${e}`);
+    }
+  };
+
+  const setChecked = (path: string, checked: boolean) => {
+    setTiffList((prev) =>
+      prev.map((t) => (t.path === path ? { ...t, checked } : t))
+    );
+  };
+
+  const selectAll = (checked: boolean) => {
+    setTiffList((prev) => prev.map((t) => ({ ...t, checked })));
+  };
+
+  const checkedCount = tiffList.filter((t) => t.checked).length;
+  const allChecked = tiffList.length > 0 && checkedCount === tiffList.length;
+  const someChecked = checkedCount > 0;
 
   const run = async () => {
-    if (!folder || !activeModelId) {
-      setLog((prev) => [...prev, "Select folder and an active model first."]);
+    const active = models.find((m) => String(m.id) === activeModelId);
+    const modelName = active?.name ?? "";
+    if (!modelName) {
+      appendLog("Select an active YOLO model first.");
       return;
     }
-    setRunning(true);
-    setLog((prev) => [...prev, "Starting processing..."]);
-    setProgress(null);
+    const toProcess = tiffList.filter((t) => t.checked).map((t) => t.path);
+    if (toProcess.length === 0) {
+      appendLog("Select at least one TIFF (checkbox) to process.");
+      return;
+    }
+    startProcessing();
     try {
-      await invoke("run_processing_cmd", { folder });
+      await invoke("run_processing_cmd", { files: toProcess, modelName });
     } catch (e) {
-      setLog((prev) => [...prev, `Error: ${e}`]);
+      appendLog(`Error: ${e}`);
       setRunning(false);
     }
   };
 
-  const cancel = () => invoke("cancel_processing");
-
-  const clearLog = () => setLog([]);
+  const openResultFolder = (path: string) => {
+    const out = outputFolders[path];
+    if (out) openPath(out);
+  };
 
   return (
     <div className="space-y-4 p-4">
@@ -153,13 +173,17 @@ export function Dashboard() {
                 <p>RAM: {specs.total_ram_gb}</p>
                 <p>
                   GPU:{" "}
-                  <Badge variant={specs.gpu.includes("No") ? "destructive" : "default"}>
+                  <Badge
+                    variant={
+                      specs.gpu.includes("No") ? "destructive" : "default"
+                    }
+                  >
                     {specs.gpu} {specs.gpu_memory}
                   </Badge>
                 </p>
               </>
             )}
-            <p>Folder: {folder || "—"}</p>
+            <p>TIFF files: {tiffList.length}</p>
             <p>Process: {running ? "Running" : "Idle"}</p>
           </CardContent>
         </Card>
@@ -170,15 +194,14 @@ export function Dashboard() {
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="space-y-2">
-              <Label>Folder</Label>
+              <Label>TIFF files</Label>
               <div className="flex gap-2">
-                <Input
-                  readOnly
-                  value={folder}
-                  placeholder="Select folder with images + .tfw"
-                />
-                <Button variant="outline" onClick={pickFolder} disabled={running}>
-                  Browse
+                <Button
+                  variant="outline"
+                  onClick={pickTiff}
+                  disabled={running}
+                >
+                  Pick TIFF
                 </Button>
               </div>
             </div>
@@ -204,53 +227,78 @@ export function Dashboard() {
                 </SelectContent>
               </Select>
             </div>
+            {tiffList.length > 0 && (
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    id="select-all"
+                    checked={allChecked}
+                    onCheckedChange={(c) => selectAll(!!c)}
+                    disabled={running}
+                  />
+                  <Label
+                    htmlFor="select-all"
+                    className="text-sm font-normal cursor-pointer"
+                  >
+                    Select all ({checkedCount} selected)
+                  </Label>
+                </div>
+                <ScrollArea className="h-32 rounded border p-2">
+                  <div className="space-y-1.5">
+                    {tiffList.map((t) => (
+                      <div
+                        key={t.path}
+                        className="flex items-center gap-2 text-sm"
+                      >
+                        <Checkbox
+                          checked={t.checked}
+                          onCheckedChange={(c) => setChecked(t.path, !!c)}
+                          disabled={running}
+                        />
+                        <span
+                          className="flex-1 truncate font-mono"
+                          title={t.path}
+                        >
+                          {t.path.split(/[/\\]/).pop() ?? t.path}
+                        </span>
+                        {outputFolders[t.path] && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="shrink-0 h-7 px-2"
+                            onClick={() => openResultFolder(t.path)}
+                            title="Open result folder"
+                          >
+                            <FolderOpen className="h-4 w-4" />
+                          </Button>
+                        )}
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="shrink-0 h-7 px-2 text-muted-foreground hover:text-destructive"
+                          onClick={() => removeTiff(t.path)}
+                          disabled={running}
+                          title="Remove from list"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                </ScrollArea>
+              </div>
+            )}
             <div className="flex gap-2">
-              <Button onClick={run} disabled={running || !folder || !activeModelId}>
+              <Button
+                onClick={run}
+                disabled={running || !activeModelId || !someChecked}
+              >
                 Run processing
               </Button>
-              {running && (
-                <Button variant="destructive" onClick={cancel}>
-                  Cancel
-                </Button>
-              )}
             </div>
           </CardContent>
         </Card>
       </div>
-
-      {progress && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Progress</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            <Progress value={(progress.processed / progress.total) * 100} />
-            <p className="text-sm">
-              {progress.processed} / {progress.total} — {progress.current_file} —{" "}
-              {progress.status}
-            </p>
-            <p className="text-sm text-muted-foreground">
-              Abnormal: {progress.abnormal_count} — Normal: {progress.normal_count}
-            </p>
-          </CardContent>
-        </Card>
-      )}
-
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between">
-          <CardTitle>Log</CardTitle>
-          <Button variant="ghost" size="sm" onClick={clearLog}>
-            Clear
-          </Button>
-        </CardHeader>
-        <CardContent>
-          <ScrollArea className="h-48 rounded border p-2 font-mono text-xs">
-            {log.map((line, i) => (
-              <div key={i}>{line}</div>
-            ))}
-          </ScrollArea>
-        </CardContent>
-      </Card>
     </div>
   );
 }

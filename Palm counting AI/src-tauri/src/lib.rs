@@ -1,13 +1,23 @@
-mod annotate;
 mod config;
-mod geo;
 mod infer;
 mod specs;
-mod yolo_onnx;
+// mod yolo_onnx;  // Tidak digunakan lagi - semua inference di Python
 
 use tauri::Emitter;
 
-use config::{add_model as config_add_model, load_config, remove_model as config_remove_model, save_config, set_active_model, list_models, get_active_model_path, AppConfig};
+use config::{
+    add_model as config_add_model,
+    add_tiff_paths,
+    get_active_model_path,
+    list_models,
+    list_tiff_paths,
+    load_config,
+    remove_model as config_remove_model,
+    remove_tiff_path,
+    save_config,
+    set_active_model,
+    AppConfig,
+};
 use specs::get_system_specs;
 use std::sync::atomic::AtomicBool;
 
@@ -186,12 +196,28 @@ fn set_active_model_cmd(id: i64) -> Result<(), String> {
     set_active_model(id).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+fn list_tiff_paths_cmd() -> Result<Vec<String>, String> {
+    list_tiff_paths().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn add_tiff_paths_cmd(paths: Vec<String>) -> Result<usize, String> {
+    add_tiff_paths(paths).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn remove_tiff_path_cmd(path: String) -> Result<(), String> {
+    remove_tiff_path(&path).map_err(|e| e.to_string())
+}
+
 static PROCESSING_CANCEL: AtomicBool = AtomicBool::new(false);
 
 #[tauri::command]
 fn run_processing_cmd(
     window: tauri::Window,
-    folder: String,
+    files: Vec<String>,
+    model_name: String,
 ) -> Result<(), String> {
     let model_path = get_active_model_path()
         .map_err(|e| e.to_string())?
@@ -201,19 +227,23 @@ fn run_processing_cmd(
     cancel.store(false, std::sync::atomic::Ordering::Relaxed);
 
     std::thread::spawn(move || {
-        let on_log = |s: &str| {
-            let _ = window.emit("processing-log", s);
+        let window_log = window.clone();
+        let window_progress = window.clone();
+        let window_done = window.clone();
+        let on_log = move |s: &str| {
+            let _ = window_log.emit("processing-log", s);
         };
-        let on_progress = |p: &infer::ProgressPayload| {
-            let _ = window.emit("processing-progress", p);
+        let on_progress = move |p: &infer::ProgressPayload| {
+            let _ = window_progress.emit("processing-progress", p);
         };
-        let on_done = |d: &infer::DonePayload| {
-            let _ = window.emit("processing-done", d);
+        let on_done = move |d: &infer::DonePayload| {
+            let _ = window_done.emit("processing-done", d);
         };
-        if let Err(e) = infer::run_processing(
-            &folder,
-            &config,
+        if let Err(e) = infer::run_processing_files(
+            &files,
             &model_path,
+            &model_name,
+            &config,
             cancel,
             on_log,
             on_progress,
@@ -255,6 +285,9 @@ pub fn run() {
             add_models_cmd,
             remove_model_cmd,
             set_active_model_cmd,
+            list_tiff_paths_cmd,
+            add_tiff_paths_cmd,
+            remove_tiff_path_cmd,
             run_processing_cmd,
             cancel_processing,
         ])

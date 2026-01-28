@@ -9,4 +9,5 @@
 # PyInstaller build artifacts (created during model conversion)
 /python_ai/build/
 /python_ai/dist/
+/python_ai/__pycache__/
 /python_ai/*.spec

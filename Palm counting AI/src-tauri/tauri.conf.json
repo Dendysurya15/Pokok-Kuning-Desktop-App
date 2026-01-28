@@ -12,9 +12,10 @@
   "app": {
     "windows": [
       {
-        "title": "palm-counting-ai",
+        "title": "Palm-Counting-Ai v0.1.0",
         "width": 800,
-        "height": 600
+        "height": 600,
+        "maximizable": false
       }
     ],
     "security": {

@@ -63,6 +63,17 @@ pub fn setup_db() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         [],
     )?;
 
+    conn.execute(
+        r#"
+        CREATE TABLE IF NOT EXISTS tiff_files (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            path TEXT UNIQUE NOT NULL,
+            created_at TEXT DEFAULT (datetime('now'))
+        )
+        "#,
+        [],
+    )?;
+
     // Add columns if missing (migrations)
     let add_col = |name: &str, sql: &str| -> Result<(), rusqlite::Error> {
         let exists: bool = conn.query_row(
@@ -256,150 +267,16 @@ pub fn add_model(name: String, source_path: &Path) -> Result<YoloModel, Box<dyn 
     setup_db()?;
     std::fs::create_dir_all(models_dir())?;
     
-    let is_pt = source_path.extension()
-        .and_then(|e| e.to_str())
-        .map(|e| e.eq_ignore_ascii_case("pt"))
-        .unwrap_or(false);
-    
-    let is_onnx = source_path.extension()
-        .and_then(|e| e.to_str())
-        .map(|e| e.eq_ignore_ascii_case("onnx"))
-        .unwrap_or(false);
-    
-    let final_path = if is_pt {
-        // Auto-convert .pt to .onnx
-        let base = source_path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("model");
-        let onnx_dest = models_dir().join(format!("{}.onnx", base));
-        let onnx_dest = unique_path_with_ext(&onnx_dest, "onnx");
-        
-        // Copy .pt first (keep original)
-        let pt_dest = models_dir().join(format!("{}.pt", base));
-        let pt_dest = unique_path_with_ext(&pt_dest, "pt");
-        std::fs::copy(source_path, &pt_dest)?;
-        
-        // Convert to ONNX using Python sidecar
-        // Gunakan image size yang lebih kecil untuk conversion (640) agar cepat
-        // Image size untuk inference bisa berbeda (dari config), tapi untuk conversion
-        // kita gunakan 640 untuk kecepatan (sama seperti manual conversion)
-        let imgsz = 640;  // Fixed size untuk conversion agar cepat seperti manual
-        
-        // Try to use sidecar Python worker for conversion
-        let (converter_path, use_python) = get_converter_path();
-        eprintln!("Converter path: {} (use_python: {})", converter_path.display(), use_python);
-        eprintln!("Converter exists: {}", converter_path.exists());
-        
-        let conversion_success = if converter_path.exists() {
-            // Use sidecar Python worker with --convert mode
-            let mut cmd = if use_python {
-                // Fallback to Python script for dev mode
-                eprintln!("Using Python command: python {}", converter_path.display());
-                let mut c = std::process::Command::new("python");
-                c.arg(&converter_path);
-                c
-            } else {
-                // Use sidecar executable
-                eprintln!("Using sidecar executable: {}", converter_path.display());
-                std::process::Command::new(&converter_path)
-            };
-            
-            let output = cmd
-                .arg("--convert")
-                .arg(&pt_dest)
-                .arg(&onnx_dest)
-                .arg(&imgsz.to_string())
-                .output();
-            
-            let result = match output {
-                Ok(o) if o.status.success() && onnx_dest.exists() => {
-                    eprintln!("Conversion successful!");
-                    true
-                }
-                Ok(o) => {
-                    // Log stderr if available
-                    let stdout = String::from_utf8_lossy(&o.stdout);
-                    let stderr = String::from_utf8_lossy(&o.stderr);
-                    eprintln!("Conversion failed. Exit code: {}", o.status.code().unwrap_or(-1));
-                    if !stdout.is_empty() {
-                        eprintln!("Conversion stdout: {}", stdout);
-                    }
-                    if !stderr.is_empty() {
-                        eprintln!("Conversion stderr: {}", stderr);
-                    }
-                    false
-                }
-                Err(e) => {
-                    eprintln!("Failed to run converter for conversion: {}", e);
-                    false
-                }
-            };
-            
-            // Cleanup any build artifacts that might have been created
-            // (PyInstaller artifacts, temp files, etc.)
-            // Note: PyInstaller might create artifacts even when not explicitly called
-            // Clean them up IMMEDIATELY to prevent Tauri watch mode from rebuilding
-            if use_python {
-                if let Some(script_dir) = converter_path.parent() {
-                    // Cleanup PyInstaller artifacts if they exist
-                    // Try immediate cleanup first, then background cleanup for stubborn files
-                    let build_dir = script_dir.join("build");
-                    let dist_dir = script_dir.join("dist");
-                    let spec_file = script_dir.join("infer_worker.spec");
-                    
-                    // Immediate cleanup attempt
-                    let _ = std::fs::remove_dir_all(&build_dir);
-                    let _ = std::fs::remove_dir_all(&dist_dir);
-                    let _ = std::fs::remove_file(&spec_file);
-                    
-                    // Background cleanup with retry for files that might still be locked
-                    let build_dir_clone = build_dir.clone();
-                    let dist_dir_clone = dist_dir.clone();
-                    let spec_file_clone = spec_file.clone();
-                    std::thread::spawn(move || {
-                        // Small delay to ensure Python process has released file handles
-                        std::thread::sleep(std::time::Duration::from_millis(1000));
-                        let _ = std::fs::remove_dir_all(&build_dir_clone);
-                        let _ = std::fs::remove_dir_all(&dist_dir_clone);
-                        let _ = std::fs::remove_file(&spec_file_clone);
-                    });
-                }
-            }
-            
-            result
-        } else {
-            eprintln!("Converter path does not exist: {}", converter_path.display());
-            false
-        };
-        
-        if conversion_success {
-            onnx_dest.to_string_lossy().into_owned()
-        } else {
-            // Conversion failed, use .pt
-            pt_dest.to_string_lossy().into_owned()
-        }
-    } else if is_onnx {
-        // Already ONNX, just copy
-        let base = source_path
-            .file_name()
-            .and_then(|s| s.to_str())
-            .unwrap_or("model");
-        let dest = models_dir().join(base);
-        let dest = unique_path(&dest);
-        std::fs::copy(source_path, &dest)?;
-        dest.to_string_lossy().into_owned()
-    } else {
-        // Unknown format, copy as-is
-        let base = source_path
-            .file_name()
-            .and_then(|s| s.to_str())
-            .unwrap_or("model");
-        let dest = models_dir().join(base);
-        let dest = unique_path(&dest);
-        std::fs::copy(source_path, &dest)?;
-        dest.to_string_lossy().into_owned()
-    };
+    // Support .pt dan .onnx langsung (tidak perlu convert)
+    // Python sidecar akan handle inference untuk kedua format
+    let base = source_path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("model");
+    let dest = models_dir().join(base);
+    let dest = unique_path(&dest);
+    std::fs::copy(source_path, &dest)?;
+    let final_path = dest.to_string_lossy().into_owned();
 
     let conn = open_db()?;
     conn.execute("INSERT INTO yolo_models (name, path) VALUES (?1, ?2)", [&name, &final_path])?;
@@ -416,123 +293,6 @@ pub fn add_model(name: String, source_path: &Path) -> Result<YoloModel, Box<dyn 
         path: final_path,
         is_active: active == Some(id),
     })
-}
-
-/// Get converter path (sidecar atau Python script untuk dev mode)
-/// Returns (path, use_python_command)
-fn get_converter_path() -> (PathBuf, bool) {
-    // Cari sidecar yang valid terlebih dahulu
-    // Untuk dev mode, executable di target/debug/, sidecar di src-tauri/binaries/
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(exe_dir) = exe.parent() {
-            // Cek di src-tauri/binaries/ (untuk dev mode)
-            // target/debug/ -> target/ -> src-tauri/ -> binaries/
-            if let Some(target_dir) = exe_dir.parent() {
-                if let Some(src_tauri_dir) = target_dir.parent() {
-                    let sidecar_bin = src_tauri_dir.join("binaries").join("infer_worker-x86_64-pc-windows-msvc.exe");
-                    if sidecar_bin.exists() {
-                        if let Ok(metadata) = std::fs::metadata(&sidecar_bin) {
-                            if metadata.len() > 1_000_000 {
-                                eprintln!("Using valid sidecar: {}", sidecar_bin.display());
-                                return (sidecar_bin, false);
-                            }
-                        }
-                    }
-                }
-            }
-            
-            // Cek di directory yang sama dengan executable (untuk production)
-            let sidecar = exe_dir.join("infer_worker.exe");
-            if sidecar.exists() {
-                if let Ok(metadata) = std::fs::metadata(&sidecar) {
-                    if metadata.len() > 1_000_000 {
-                        eprintln!("Using valid sidecar: {}", sidecar.display());
-                        return (sidecar, false);
-                    }
-                }
-            }
-            
-            // Cek di subdirectory binaries (untuk production)
-            let sidecar_bin = exe_dir.join("binaries").join("infer_worker.exe");
-            if sidecar_bin.exists() {
-                if let Ok(metadata) = std::fs::metadata(&sidecar_bin) {
-                    if metadata.len() > 1_000_000 {
-                        eprintln!("Using valid sidecar: {}", sidecar_bin.display());
-                        return (sidecar_bin, false);
-                    }
-                }
-            }
-        }
-    }
-    
-    // Fallback ke Python script untuk dev mode
-    // Cari python_ai/infer_worker.py di src-tauri/ (karena sudah dipindah ke src-tauri/)
-    // Untuk dev mode, executable di target/debug/, src-tauri/ adalah parent dari target/
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(exe_dir) = exe.parent() {
-            // target/debug/ -> target/ -> src-tauri/
-            let possible_paths = vec![
-                // Dari target/debug/ -> target/ -> src-tauri/ -> python_ai/
-                exe_dir.parent().and_then(|p| p.parent()).map(|p| p.join("python_ai").join("infer_worker.py")),
-            ];
-            
-            for path_opt in possible_paths {
-                if let Some(path) = path_opt {
-                    if path.exists() {
-                        eprintln!("Using Python script for conversion: {}", path.display());
-                        return (path, true);
-                    }
-                }
-            }
-        }
-    }
-    
-    // Fallback: coba dari current working directory (biasanya project root saat dev)
-    // Tapi sekarang python_ai ada di src-tauri/, jadi coba src-tauri/python_ai/
-    if let Ok(cwd) = std::env::current_dir() {
-        // Coba dari project root -> src-tauri/python_ai/
-        let fallback1 = cwd.join("src-tauri").join("python_ai").join("infer_worker.py");
-        if fallback1.exists() {
-            eprintln!("Using Python script for conversion (from CWD/src-tauri): {}", fallback1.display());
-            return (fallback1, true);
-        }
-        // Atau langsung dari CWD jika CWD adalah src-tauri/
-        let fallback2 = cwd.join("python_ai").join("infer_worker.py");
-        if fallback2.exists() {
-            eprintln!("Using Python script for conversion (from CWD): {}", fallback2.display());
-            return (fallback2, true);
-        }
-    }
-    
-    // Jika tidak ditemukan, return path yang diharapkan (untuk error message)
-    eprintln!("WARNING: No converter found, will try Python script from src-tauri/python_ai/");
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(exe_dir) = exe.parent() {
-            if let Some(target_dir) = exe_dir.parent() {
-                if let Some(src_tauri_dir) = target_dir.parent() {
-                    let python_script = src_tauri_dir.join("python_ai").join("infer_worker.py");
-                    return (python_script, true);
-                }
-            }
-        }
-    }
-    
-    (PathBuf::from("src-tauri/python_ai/infer_worker.py"), true)
-}
-
-fn unique_path_with_ext(p: &PathBuf, ext: &str) -> PathBuf {
-    if !p.exists() {
-        return p.clone();
-    }
-    let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("model");
-    let parent = p.parent().unwrap();
-    for n in 1..10000 {
-        let candidate = parent.join(format!("{}_{}.{}", stem, n, ext));
-        if !candidate.exists() {
-            return candidate;
-        }
-    }
-    parent.join(format!("{}_{}.{}", stem, 0, ext))
 }
 
 fn unique_path(p: &PathBuf) -> PathBuf {
@@ -577,4 +337,39 @@ pub fn get_active_model_path() -> Result<Option<String>, Box<dyn std::error::Err
     let conn = open_db()?;
     let path: Option<String> = conn.query_row("SELECT path FROM yolo_models WHERE id = ?1", [aid], |r| r.get(0))?;
     Ok(path)
+}
+
+/// Simpan daftar path TIFF ke SQLite (local). Duplikat di-ignore.
+pub fn add_tiff_paths(paths: Vec<String>) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
+    setup_db()?;
+    let conn = open_db()?;
+    let mut added = 0_usize;
+    for p in paths {
+        if p.trim().is_empty() {
+            continue;
+        }
+        match conn.execute("INSERT OR IGNORE INTO tiff_files (path) VALUES (?1)", [&p]) {
+            Ok(1) => added += 1,
+            _ => {}
+        }
+    }
+    Ok(added)
+}
+
+/// Ambil daftar path TIFF dari SQLite (urutan created_at).
+pub fn list_tiff_paths() -> Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>> {
+    setup_db()?;
+    let conn = open_db()?;
+    let mut stmt = conn.prepare("SELECT path FROM tiff_files ORDER BY created_at ASC")?;
+    let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+    let out: Result<Vec<_>, _> = rows.collect();
+    Ok(out?)
+}
+
+/// Hapus satu path TIFF dari daftar.
+pub fn remove_tiff_path(path: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    setup_db()?;
+    let conn = open_db()?;
+    conn.execute("DELETE FROM tiff_files WHERE path = ?1", [path])?;
+    Ok(())
 }

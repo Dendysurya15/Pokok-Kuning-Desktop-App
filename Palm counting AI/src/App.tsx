@@ -1,75 +1,158 @@
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Progress } from "@/components/ui/progress";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { Dashboard, YoloModelPage, SettingsPage } from "@/pages";
+import { useConversionStore } from "@/stores/conversion";
+import {
+  useProcessingStore,
+  type ProcessingProgress,
+} from "@/stores/processing";
 
-// Global state untuk conversion status (tidak ter-cleanup saat ganti tab)
-let globalConversionStatus: string | null = null;
-let globalIsAdding = false;
-const conversionStatusListeners = new Set<(status: string | null, isAdding: boolean) => void>();
+function ProcessingStrip() {
+  const running = useProcessingStore((s) => s.running);
+  const progress = useProcessingStore((s) => s.progress);
+  const log = useProcessingStore((s) => s.log);
+  const clearLog = useProcessingStore((s) => s.clearLog);
+  const cancel = useProcessingStore((s) => s.cancel);
 
-export function useConversionStatus() {
-  const [conversionStatus, setLocalStatus] = useState<string | null>(globalConversionStatus);
-  const [isAdding, setLocalAdding] = useState(globalIsAdding);
-
-  useEffect(() => {
-    // Restore state saat component mount
-    setLocalStatus(globalConversionStatus);
-    setLocalAdding(globalIsAdding);
-
-    // Register listener untuk update
-    const listener = (status: string | null, adding: boolean) => {
-      setLocalStatus(status);
-      setLocalAdding(adding);
-    };
-    conversionStatusListeners.add(listener);
-
-    return () => {
-      conversionStatusListeners.delete(listener);
-    };
-  }, []);
-
-  return { conversionStatus, isAdding };
-}
-
-export function updateConversionStatus(status: string | null, isAdding: boolean) {
-  globalConversionStatus = status;
-  globalIsAdding = isAdding;
-  // Notify all listeners
-  conversionStatusListeners.forEach((listener) => listener(status, isAdding));
+  if (!running) return null;
+  return (
+    <div className="border-t bg-muted/30 space-y-4 p-4">
+      <div className="flex items-center justify-between gap-4">
+        <span className="text-sm font-medium">Processing…</span>
+        <Button variant="destructive" size="sm" onClick={cancel}>
+          Cancel
+        </Button>
+      </div>
+      {progress && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Progress</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            <Progress value={(progress.processed / progress.total) * 100} />
+            <p className="text-sm">
+              {progress.processed} / {progress.total} —{" "}
+              {progress.current_file?.split(/[/\\]/).pop() ?? progress.current_file}{" "}
+              — {progress.status}
+            </p>
+            <p className="text-sm text-muted-foreground">
+              Abnormal: {progress.abnormal_count} — Normal:{" "}
+              {progress.normal_count}
+            </p>
+          </CardContent>
+        </Card>
+      )}
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between py-2">
+          <CardTitle className="text-base">Log</CardTitle>
+          <Button variant="ghost" size="sm" onClick={clearLog}>
+            Clear
+          </Button>
+        </CardHeader>
+        <CardContent className="py-2">
+          <ScrollArea className="h-40 rounded border p-2 font-mono text-xs">
+            {log.map((line, i) => (
+              <div key={i}>{line}</div>
+            ))}
+          </ScrollArea>
+        </CardContent>
+      </Card>
+    </div>
+  );
 }
 
 export default function App() {
   useEffect(() => {
-    // Setup global event listeners di App level (tidak ter-cleanup)
-    let unlistenStart: (() => void) | null = null;
-    let unlistenDone: (() => void) | null = null;
-    let unlistenError: (() => void) | null = null;
+    const unsubs: (() => void)[] = [];
+    let cancelled = false;
     let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    const setConversion = useConversionStore.getState().setStatus;
 
-    const setupListeners = async () => {
-      unlistenStart = await listen<string>("model-conversion-start", (e) => {
-        updateConversionStatus(e.payload, true);
+    const setup = async () => {
+      let u = await listen<string>("model-conversion-start", (e) => {
+        setConversion(e.payload, true);
       });
-      unlistenDone = await listen<string>("model-conversion-done", (e) => {
-        updateConversionStatus(e.payload, false);
+      if (cancelled) {
+        u();
+        return;
+      }
+      unsubs.push(u);
+
+      u = await listen<string>("model-conversion-done", (e) => {
+        setConversion(e.payload, false);
         if (timeoutId) clearTimeout(timeoutId);
-        timeoutId = setTimeout(() => updateConversionStatus(null, false), 3000);
+        timeoutId = setTimeout(() => setConversion(null, false), 3000);
       });
-      unlistenError = await listen<string>("model-conversion-error", (e) => {
-        updateConversionStatus(`Error: ${e.payload}`, false);
+      if (cancelled) {
+        u();
+        return;
+      }
+      unsubs.push(u);
+
+      u = await listen<string>("model-conversion-error", (e) => {
+        setConversion(`Error: ${e.payload}`, false);
         if (timeoutId) clearTimeout(timeoutId);
-        timeoutId = setTimeout(() => updateConversionStatus(null, false), 5000);
+        timeoutId = setTimeout(() => setConversion(null, false), 5000);
       });
+      if (cancelled) {
+        u();
+        return;
+      }
+      unsubs.push(u);
     };
-
-    setupListeners();
+    setup();
 
     return () => {
-      if (unlistenStart) unlistenStart();
-      if (unlistenDone) unlistenDone();
-      if (unlistenError) unlistenError();
+      cancelled = true;
       if (timeoutId) clearTimeout(timeoutId);
+      unsubs.forEach((f) => f());
+    };
+  }, []);
+
+  useEffect(() => {
+    const unsubs: (() => void)[] = [];
+    let cancelled = false;
+    const appendLog = useProcessingStore.getState().appendLog;
+    const setProgress = useProcessingStore.getState().setProgress;
+    const setRunning = useProcessingStore.getState().setRunning;
+
+    const setup = async () => {
+      let u = await listen<string>("processing-log", (e) =>
+        appendLog(e.payload)
+      );
+      if (cancelled) {
+        u();
+        return;
+      }
+      unsubs.push(u);
+
+      u = await listen<ProcessingProgress>(
+        "processing-progress",
+        (e) => setProgress(e.payload)
+      );
+      if (cancelled) {
+        u();
+        return;
+      }
+      unsubs.push(u);
+
+      u = await listen("processing-done", () => setRunning(false));
+      if (cancelled) {
+        u();
+        return;
+      }
+      unsubs.push(u);
+    };
+    setup();
+
+    return () => {
+      cancelled = true;
+      unsubs.forEach((f) => f());
     };
   }, []);
 
@@ -80,13 +163,22 @@ export default function App() {
       </header>
       <Tabs defaultValue="dashboard" className="w-full">
         <TabsList className="w-full justify-start rounded-none border-b bg-transparent p-0">
-          <TabsTrigger value="dashboard" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent">
+          <TabsTrigger
+            value="dashboard"
+            className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent"
+          >
             Dashboard
           </TabsTrigger>
-          <TabsTrigger value="yolo" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent">
+          <TabsTrigger
+            value="yolo"
+            className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent"
+          >
             YOLO Model
           </TabsTrigger>
-          <TabsTrigger value="settings" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent">
+          <TabsTrigger
+            value="settings"
+            className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent"
+          >
             Settings
           </TabsTrigger>
         </TabsList>
@@ -100,6 +192,10 @@ export default function App() {
           <SettingsPage />
         </TabsContent>
       </Tabs>
+      <ProcessingStrip />
+      <footer className="border-t px-4 py-2 text-center text-xs text-muted-foreground">
+        © 2026–present Digital Architect. All rights reserved.
+      </footer>
     </div>
   );
 }
