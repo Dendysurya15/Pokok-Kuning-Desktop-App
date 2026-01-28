@@ -338,21 +338,27 @@ pub fn add_model(name: String, source_path: &Path) -> Result<YoloModel, Box<dyn 
             // Cleanup any build artifacts that might have been created
             // (PyInstaller artifacts, temp files, etc.)
             // Note: PyInstaller might create artifacts even when not explicitly called
-            // Clean them up to prevent Tauri watch mode from rebuilding
+            // Clean them up IMMEDIATELY to prevent Tauri watch mode from rebuilding
             if use_python {
                 if let Some(script_dir) = converter_path.parent() {
                     // Cleanup PyInstaller artifacts if they exist
+                    // Try immediate cleanup first, then background cleanup for stubborn files
                     let build_dir = script_dir.join("build");
                     let dist_dir = script_dir.join("dist");
                     let spec_file = script_dir.join("infer_worker.spec");
                     
-                    // Cleanup in background thread with small delay to ensure files are closed
+                    // Immediate cleanup attempt
+                    let _ = std::fs::remove_dir_all(&build_dir);
+                    let _ = std::fs::remove_dir_all(&dist_dir);
+                    let _ = std::fs::remove_file(&spec_file);
+                    
+                    // Background cleanup with retry for files that might still be locked
                     let build_dir_clone = build_dir.clone();
                     let dist_dir_clone = dist_dir.clone();
                     let spec_file_clone = spec_file.clone();
                     std::thread::spawn(move || {
                         // Small delay to ensure Python process has released file handles
-                        std::thread::sleep(std::time::Duration::from_millis(500));
+                        std::thread::sleep(std::time::Duration::from_millis(1000));
                         let _ = std::fs::remove_dir_all(&build_dir_clone);
                         let _ = std::fs::remove_dir_all(&dist_dir_clone);
                         let _ = std::fs::remove_file(&spec_file_clone);

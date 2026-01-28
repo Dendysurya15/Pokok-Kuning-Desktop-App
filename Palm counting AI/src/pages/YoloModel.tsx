@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -15,6 +14,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Loader2 } from "lucide-react";
+import { useConversionStatus, updateConversionStatus } from "@/App";
 
 interface YoloModel {
   id: number;
@@ -25,8 +25,7 @@ interface YoloModel {
 
 export function YoloModelPage() {
   const [models, setModels] = useState<YoloModel[]>([]);
-  const [isAdding, setIsAdding] = useState(false);
-  const [conversionStatus, setConversionStatus] = useState<string | null>(null);
+  const { conversionStatus, isAdding } = useConversionStatus();
 
   const load = useCallback(async () => {
     try {
@@ -41,26 +40,6 @@ export function YoloModelPage() {
     load();
   }, [load]);
 
-  useEffect(() => {
-    const unlistenStart = listen<string>("model-conversion-start", (e) => {
-      setConversionStatus(e.payload);
-    });
-    const unlistenDone = listen<string>("model-conversion-done", (e) => {
-      setConversionStatus(e.payload);
-      setTimeout(() => setConversionStatus(null), 3000);
-    });
-    const unlistenError = listen<string>("model-conversion-error", (e) => {
-      setConversionStatus(`Error: ${e.payload}`);
-      setTimeout(() => setConversionStatus(null), 5000);
-    });
-    
-    return () => {
-      unlistenStart.then((u) => u());
-      unlistenDone.then((u) => u());
-      unlistenError.then((u) => u());
-    };
-  }, []);
-
   const addModel = async () => {
     const selected = await open({
       multiple: false,
@@ -68,18 +47,17 @@ export function YoloModelPage() {
     });
     if (!selected || typeof selected !== "string") return;
     
-    setIsAdding(true);
-    setConversionStatus(null);
+    updateConversionStatus(null, true);
     
     try {
       await invoke("add_model_cmd", { sourcePath: selected, name: undefined });
       await load();
     } catch (e) {
       console.error(e);
-      setConversionStatus(`Error: ${e}`);
-      setTimeout(() => setConversionStatus(null), 5000);
+      updateConversionStatus(`Error: ${e}`, false);
+      setTimeout(() => updateConversionStatus(null, false), 5000);
     } finally {
-      setIsAdding(false);
+      updateConversionStatus(null, false);
     }
   };
 

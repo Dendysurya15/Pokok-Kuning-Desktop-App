@@ -59,10 +59,19 @@ def build_python_sidecar():
     
     # PyInstaller command
     # Note: --collect-all akan bundle semua submodules, penting untuk PyTorch/CUDA
+    # Gunakan --workpath dan --distpath untuk mengarahkan artifacts ke temp location
+    # Ini membantu mencegah Tauri watch mode dari mendeteksi perubahan
+    import tempfile
+    temp_build_dir = Path(tempfile.gettempdir()) / "pyinstaller_build" / f"infer_worker_{os.getpid()}"
+    temp_build_dir.mkdir(parents=True, exist_ok=True)
+    
     pyinstaller_cmd = [
         sys.executable, "-m", "PyInstaller",
         "--onefile",
         "--name", "infer_worker",
+        "--workpath", str(temp_build_dir / "build"),  # Build artifacts ke temp
+        "--distpath", str(temp_build_dir / "dist"),   # Dist artifacts ke temp
+        "--specpath", str(temp_build_dir),            # Spec file ke temp (PENTING: cegah Tauri watch mode)
         "--hidden-import", "ultralytics",
         "--hidden-import", "torch",
         "--hidden-import", "torchvision",
@@ -90,15 +99,21 @@ def build_python_sidecar():
         return False
     
     # Move hasil build ke binaries directory
-    dist_dir = python_ai_dir / "dist"
+    # Build output sekarang di temp directory
+    temp_dist_dir = temp_build_dir / "dist"
     if sys.platform == "win32":
-        build_output = dist_dir / "infer_worker.exe"
+        build_output = temp_dist_dir / "infer_worker.exe"
     else:
-        build_output = dist_dir / "infer_worker"
+        build_output = temp_dist_dir / "infer_worker"
     
     if not build_output.exists():
         print(f"ERROR: Build output tidak ditemukan: {build_output}")
-        print(f"  Dist directory contents: {list(dist_dir.iterdir()) if dist_dir.exists() else 'not found'}")
+        print(f"  Dist directory contents: {list(temp_dist_dir.iterdir()) if temp_dist_dir.exists() else 'not found'}")
+        # Cleanup temp directory
+        try:
+            shutil.rmtree(temp_build_dir)
+        except:
+            pass
         return False
     
     # Rename sesuai target triple
@@ -109,16 +124,40 @@ def build_python_sidecar():
     print(f"Copying {build_output} -> {final_output}")
     shutil.copy2(build_output, final_output)
     
-    # Cleanup PyInstaller artifacts
-    build_dir = python_ai_dir / "build"
+    # Cleanup PyInstaller artifacts IMMEDIATELY to prevent Tauri watch mode from detecting changes
+    # Hapus .spec file terlebih dahulu (ini yang paling sering trigger rebuild)
+    # Note: Dengan --specpath, spec file seharusnya sudah di temp, tapi cek juga di python_ai_dir untuk safety
     spec_file = python_ai_dir / "infer_worker.spec"
-    
-    if build_dir.exists():
-        shutil.rmtree(build_dir)
     if spec_file.exists():
-        spec_file.unlink()
+        try:
+            spec_file.unlink()
+            print("Cleaned up infer_worker.spec from python_ai directory")
+        except Exception as e:
+            print(f"Warning: Could not remove spec file: {e}")
+    
+    # Cleanup temp build directory
+    try:
+        shutil.rmtree(temp_build_dir)
+        print("Cleaned up temp build directory")
+    except Exception as e:
+        print(f"Warning: Could not remove temp build directory: {e}")
+    
+    # Juga cleanup jika ada build/dist di python_ai_dir (untuk safety)
+    build_dir = python_ai_dir / "build"
+    if build_dir.exists():
+        try:
+            shutil.rmtree(build_dir)
+            print("Cleaned up build directory in python_ai")
+        except Exception as e:
+            print(f"Warning: Could not remove build directory: {e}")
+    
+    dist_dir = python_ai_dir / "dist"
     if dist_dir.exists():
-        shutil.rmtree(dist_dir)
+        try:
+            shutil.rmtree(dist_dir)
+            print("Cleaned up dist directory in python_ai")
+        except Exception as e:
+            print(f"Warning: Could not remove dist directory: {e}")
     
     print(f"✓ Python sidecar berhasil dibuild: {final_output}")
     print(f"  Size: {final_output.stat().st_size / (1024*1024):.2f} MB")

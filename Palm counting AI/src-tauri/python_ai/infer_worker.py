@@ -27,23 +27,64 @@ def convert_mode() -> None:
     
     try:
         from ultralytics import YOLO
+        import torch
+        
+        # WAJIB GPU - tidak ada fallback ke CPU
+        if not torch.cuda.is_available():
+            log_error("GPU (CUDA) is REQUIRED for model conversion!")
+            log_error("This application requires a GPU to function.")
+            log_error("Please ensure you have:")
+            log_error("  1. NVIDIA GPU with CUDA support")
+            log_error("  2. CUDA drivers installed")
+            log_error("  3. PyTorch with CUDA support installed")
+            sys.exit(1)
+        
+        # Set device ke GPU (wajib)
+        device = 'cuda:0'
+        gpu_name = torch.cuda.get_device_name(0)
+        gpu_memory = torch.cuda.get_device_properties(0).total_memory / (1024**3)  # GB
+        print(f"Using GPU: {gpu_name} ({gpu_memory:.1f} GB)", file=sys.stderr, flush=True)
+        
     except ImportError as e:
-        log_error(f"Failed to import ultralytics: {e}")
-        log_error("Please install: pip install ultralytics")
+        log_error(f"Failed to import: {e}")
+        sys.exit(1)
+    except Exception as e:
+        log_error(f"GPU detection failed: {e}")
+        log_error("GPU (CUDA) is REQUIRED for model conversion!")
         sys.exit(1)
     
     try:
         print(f"Loading model: {pt_path}", file=sys.stderr, flush=True)
         model = YOLO(pt_path)
         
-        print(f"Exporting to ONNX: {onnx_path}", file=sys.stderr, flush=True)
+        # PAKSA PAKAI GPU - pindahkan model ke device sebelum export
+        model.to(device)
+        print(f"Model moved to device: {device}", file=sys.stderr, flush=True)
+        
+        # Verifikasi model benar-benar di GPU dengan dummy forward pass (WAJIB GPU)
+        try:
+            # Test dengan dummy forward pass untuk memastikan GPU aktif
+            # Gunakan size kecil untuk test (640) untuk menghindari memory error
+            test_size = min(640, imgsz)
+            dummy_input = torch.zeros(1, 3, test_size, test_size).to(device)
+            _ = model.model(dummy_input)
+            print(f"GPU verification successful - model is on {device}", file=sys.stderr, flush=True)
+            del dummy_input
+            torch.cuda.empty_cache()  # Clear cache setelah test
+        except Exception as gpu_test_err:
+            log_error(f"GPU verification failed: {gpu_test_err}")
+            log_error("GPU (CUDA) is REQUIRED and must be working properly!")
+            sys.exit(1)
+        
+        print(f"Exporting to ONNX: {onnx_path} (imgsz={imgsz}, device={device})", file=sys.stderr, flush=True)
         model.export(
             format="onnx",
             imgsz=imgsz,
             simplify=True,
             opset=12,
             dynamic=False,
-            half=False,
+            half=False,  # Matikan half untuk compatibility
+            device=device,  # ← EKSPLISIT SET DEVICE
         )
         
         # Ultralytics exports to same directory with .onnx extension
@@ -80,7 +121,6 @@ def convert_mode() -> None:
         import traceback
         traceback.print_exc()
         sys.exit(1)
-
 
 if __name__ == "__main__":
     # Hanya support conversion mode
