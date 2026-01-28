@@ -25,7 +25,8 @@ pub fn save_annotated(
     annotated_folder: &Path,
     line_width: u32,
 ) -> Result<std::path::PathBuf, Box<dyn std::error::Error + Send + Sync>> {
-    let img = image::open(image_path)
+    // Use the same fallback function as inference to handle TIFF with RGBPalette
+    let img = crate::infer::load_image_with_fallback(image_path)
         .map_err(|e| format!("open image {}: {}", image_path.display(), e))?
         .to_rgb8();
     let (w, h) = (img.width(), img.height());

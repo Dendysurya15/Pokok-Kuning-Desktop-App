@@ -23,7 +23,7 @@ def convert_mode() -> None:
     
     pt_path = sys.argv[2]
     onnx_path = sys.argv[3]
-    imgsz = int(sys.argv[4]) if len(sys.argv) > 4 else 1280
+    imgsz = int(sys.argv[4]) if len(sys.argv) > 4 else 640  # Default 640 untuk conversion cepat
     
     try:
         from ultralytics import YOLO

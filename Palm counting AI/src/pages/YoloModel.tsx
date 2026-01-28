@@ -42,22 +42,38 @@ export function YoloModelPage() {
 
   const addModel = async () => {
     const selected = await open({
-      multiple: false,
+      multiple: true,  // Enable multiple file selection
       filters: [{ name: "YOLO model", extensions: ["pt", "onnx"] }],
     });
-    if (!selected || typeof selected !== "string") return;
+    if (!selected) return;
+    
+    // Handle both single and multiple selection
+    const files = Array.isArray(selected) ? selected : [selected];
+    if (files.length === 0) return;
     
     updateConversionStatus(null, true);
     
     try {
-      await invoke("add_model_cmd", { sourcePath: selected, name: undefined });
+      if (files.length === 1) {
+        // Single file - use existing command
+        await invoke("add_model_cmd", { sourcePath: files[0], name: undefined });
+      } else {
+        // Multiple files - use new command
+        await invoke("add_models_cmd", { sourcePaths: files });
+      }
       await load();
     } catch (e) {
       console.error(e);
       updateConversionStatus(`Error: ${e}`, false);
       setTimeout(() => updateConversionStatus(null, false), 5000);
     } finally {
-      updateConversionStatus(null, false);
+      // Don't immediately clear status for multiple files - let the final summary show
+      if (files.length === 1) {
+        updateConversionStatus(null, false);
+      } else {
+        // For multiple files, wait a bit longer to show final summary
+        setTimeout(() => updateConversionStatus(null, false), 3000);
+      }
     }
   };
 

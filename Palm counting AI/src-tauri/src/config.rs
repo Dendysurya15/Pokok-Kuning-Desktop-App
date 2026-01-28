@@ -281,9 +281,10 @@ pub fn add_model(name: String, source_path: &Path) -> Result<YoloModel, Box<dyn 
         std::fs::copy(source_path, &pt_dest)?;
         
         // Convert to ONNX using Python sidecar
-        let imgsz = load_config()
-            .map(|c| c.imgsz.parse::<u32>().unwrap_or(1280))
-            .unwrap_or(1280);
+        // Gunakan image size yang lebih kecil untuk conversion (640) agar cepat
+        // Image size untuk inference bisa berbeda (dari config), tapi untuk conversion
+        // kita gunakan 640 untuk kecepatan (sama seperti manual conversion)
+        let imgsz = 640;  // Fixed size untuk conversion agar cepat seperti manual
         
         // Try to use sidecar Python worker for conversion
         let (converter_path, use_python) = get_converter_path();

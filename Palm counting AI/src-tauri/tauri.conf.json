@@ -32,7 +32,8 @@
       "icons/icon.ico"
     ],
     "externalBin": [
-      "binaries/infer_worker"
+      "binaries/infer_worker",
+      "binaries/convert_tiff"
     ],
     "resources": [
       "python_ai",

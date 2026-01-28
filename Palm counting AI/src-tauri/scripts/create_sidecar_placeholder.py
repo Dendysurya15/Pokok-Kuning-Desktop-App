@@ -5,8 +5,27 @@ Tauri memerlukan file sidecar yang disebutkan di externalBin, bahkan untuk dev m
 import sys
 from pathlib import Path
 
-def create_placeholder():
-    """Create placeholder sidecar file untuk development"""
+def get_target_triple():
+    """Get target triple"""
+    import subprocess
+    result = subprocess.run(
+        ["rustc", "--print", "target-triple"],
+        capture_output=True,
+        text=True
+    )
+    if result.returncode == 0:
+        return result.stdout.strip()
+    # Fallback
+    if sys.platform == "win32":
+        return "x86_64-pc-windows-msvc"
+    elif sys.platform == "darwin":
+        import os
+        return "aarch64-apple-darwin" if "arm" in os.uname().machine else "x86_64-apple-darwin"
+    else:
+        return "x86_64-unknown-linux-gnu"
+
+def create_placeholder_for_sidecar(name):
+    """Create placeholder for a specific sidecar"""
     script_dir = Path(__file__).parent
     src_tauri_dir = script_dir.parent  # scripts/ -> src-tauri/
     binaries_dir = src_tauri_dir / "binaries"
@@ -15,26 +34,10 @@ def create_placeholder():
     binaries_dir.mkdir(exist_ok=True)
     
     # Get target triple
-    import subprocess
-    result = subprocess.run(
-        ["rustc", "--print", "target-triple"],
-        capture_output=True,
-        text=True
-    )
-    if result.returncode == 0:
-        target_triple = result.stdout.strip()
-    else:
-        # Fallback
-        if sys.platform == "win32":
-            target_triple = "x86_64-pc-windows-msvc"
-        elif sys.platform == "darwin":
-            import os
-            target_triple = "aarch64-apple-darwin" if "arm" in os.uname().machine else "x86_64-apple-darwin"
-        else:
-            target_triple = "x86_64-unknown-linux-gnu"
+    target_triple = get_target_triple()
     
     # Create placeholder file
-    placeholder_name = f"infer_worker-{target_triple}"
+    placeholder_name = f"{name}-{target_triple}"
     if sys.platform == "win32":
         placeholder_name += ".exe"
     
@@ -91,8 +94,18 @@ exit 0
         os.chmod(placeholder_path, 0o755)
     
     print(f"[OK] Placeholder created: {placeholder_path}")
-    print("  Note: Untuk production, jalankan 'npm run build:sidecar' untuk build sidecar yang sebenarnya")
     return True
+
+def create_placeholder():
+    """Create placeholders for all sidecars"""
+    print("Creating placeholders for all sidecars...")
+    success1 = create_placeholder_for_sidecar("infer_worker")
+    success2 = create_placeholder_for_sidecar("convert_tiff")
+    
+    if success1 and success2:
+        print("  Note: Untuk production, jalankan 'npm run build:sidecar' untuk build sidecar yang sebenarnya")
+        return True
+    return False
 
 if __name__ == "__main__":
     success = create_placeholder()

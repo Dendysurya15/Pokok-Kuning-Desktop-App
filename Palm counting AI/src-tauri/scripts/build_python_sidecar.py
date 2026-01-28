@@ -25,8 +25,8 @@ def get_target_triple():
     else:
         return "x86_64-unknown-linux-gnu"
 
-def build_python_sidecar():
-    """Build Python worker sebagai standalone executable dengan PyInstaller"""
+def build_sidecar(script_name, output_name_base):
+    """Build a single Python sidecar script"""
     script_dir = Path(__file__).parent
     src_tauri_dir = script_dir.parent  # scripts/ -> src-tauri/
     python_ai_dir = src_tauri_dir / "python_ai"  # python_ai sekarang di src-tauri/
@@ -35,8 +35,8 @@ def build_python_sidecar():
     # Buat direktori binaries jika belum ada
     binaries_dir.mkdir(exist_ok=True)
     
-    # Path ke infer_worker.py
-    worker_script = python_ai_dir / "infer_worker.py"
+    # Path ke script
+    worker_script = python_ai_dir / script_name
     if not worker_script.exists():
         print(f"ERROR: {worker_script} tidak ditemukan!")
         return False
@@ -52,7 +52,7 @@ def build_python_sidecar():
     
     # Build dengan PyInstaller
     target_triple = get_target_triple()
-    output_name = f"infer_worker-{target_triple}"
+    output_name = f"{output_name_base}-{target_triple}"
     
     print(f"Target triple: {target_triple}")
     print(f"Output name: {output_name}")
@@ -65,22 +65,42 @@ def build_python_sidecar():
     temp_build_dir = Path(tempfile.gettempdir()) / "pyinstaller_build" / f"infer_worker_{os.getpid()}"
     temp_build_dir.mkdir(parents=True, exist_ok=True)
     
+    # Determine hidden imports based on script
+    hidden_imports = []
+    collect_all = []
+    
+    if script_name == "infer_worker.py":
+        # For model conversion, need PyTorch/Ultralytics
+        hidden_imports = [
+            "--hidden-import", "ultralytics",
+            "--hidden-import", "torch",
+            "--hidden-import", "torchvision",
+            "--hidden-import", "PIL",
+            "--hidden-import", "PIL.Image",
+            "--hidden-import", "numpy",
+        ]
+        collect_all = [
+            "--collect-all", "ultralytics",
+            "--collect-all", "torch",
+            "--collect-all", "torchvision",
+        ]
+    elif script_name == "convert_tiff.py":
+        # For TIFF conversion, only need PIL
+        hidden_imports = [
+            "--hidden-import", "PIL",
+            "--hidden-import", "PIL.Image",
+        ]
+        collect_all = []
+    
     pyinstaller_cmd = [
         sys.executable, "-m", "PyInstaller",
         "--onefile",
-        "--name", "infer_worker",
+        "--name", output_name_base,
         "--workpath", str(temp_build_dir / "build"),  # Build artifacts ke temp
         "--distpath", str(temp_build_dir / "dist"),   # Dist artifacts ke temp
         "--specpath", str(temp_build_dir),            # Spec file ke temp (PENTING: cegah Tauri watch mode)
-        "--hidden-import", "ultralytics",
-        "--hidden-import", "torch",
-        "--hidden-import", "torchvision",
-        "--hidden-import", "PIL",
-        "--hidden-import", "PIL.Image",
-        "--hidden-import", "numpy",
-        "--collect-all", "ultralytics",  # Bundle semua ultralytics modules
-        "--collect-all", "torch",         # Bundle semua torch modules (termasuk CUDA)
-        "--collect-all", "torchvision",  # Bundle torchvision
+        *hidden_imports,
+        *[item for sublist in [[f"--collect-all", mod] for mod in [x for i, x in enumerate(collect_all) if i % 2 == 1]] for item in sublist],
         "--noconsole",  # Hide console window (optional, bisa dihapus untuk debugging)
         str(worker_script)
     ]
@@ -102,9 +122,9 @@ def build_python_sidecar():
     # Build output sekarang di temp directory
     temp_dist_dir = temp_build_dir / "dist"
     if sys.platform == "win32":
-        build_output = temp_dist_dir / "infer_worker.exe"
+        build_output = temp_dist_dir / f"{output_name_base}.exe"
     else:
-        build_output = temp_dist_dir / "infer_worker"
+        build_output = temp_dist_dir / output_name_base
     
     if not build_output.exists():
         print(f"ERROR: Build output tidak ditemukan: {build_output}")
@@ -127,11 +147,11 @@ def build_python_sidecar():
     # Cleanup PyInstaller artifacts IMMEDIATELY to prevent Tauri watch mode from detecting changes
     # Hapus .spec file terlebih dahulu (ini yang paling sering trigger rebuild)
     # Note: Dengan --specpath, spec file seharusnya sudah di temp, tapi cek juga di python_ai_dir untuk safety
-    spec_file = python_ai_dir / "infer_worker.spec"
+    spec_file = python_ai_dir / f"{output_name_base}.spec"
     if spec_file.exists():
         try:
             spec_file.unlink()
-            print("Cleaned up infer_worker.spec from python_ai directory")
+            print(f"Cleaned up {output_name_base}.spec from python_ai directory")
         except Exception as e:
             print(f"Warning: Could not remove spec file: {e}")
     
@@ -163,6 +183,31 @@ def build_python_sidecar():
     print(f"  Size: {final_output.stat().st_size / (1024*1024):.2f} MB")
     
     return True
+
+def build_python_sidecar():
+    """Build all Python sidecars"""
+    print("=" * 60)
+    print("Building Python sidecars...")
+    print("=" * 60)
+    
+    # Build infer_worker (model conversion)
+    print("\n[1/2] Building infer_worker (model conversion)...")
+    success1 = build_sidecar("infer_worker.py", "infer_worker")
+    
+    # Build convert_tiff (TIFF RGBPalette conversion)
+    print("\n[2/2] Building convert_tiff (TIFF conversion)...")
+    success2 = build_sidecar("convert_tiff.py", "convert_tiff")
+    
+    if success1 and success2:
+        print("\n" + "=" * 60)
+        print("✓ All sidecars built successfully!")
+        print("=" * 60)
+        return True
+    else:
+        print("\n" + "=" * 60)
+        print("✗ Some sidecars failed to build!")
+        print("=" * 60)
+        return False
 
 if __name__ == "__main__":
     success = build_python_sidecar()

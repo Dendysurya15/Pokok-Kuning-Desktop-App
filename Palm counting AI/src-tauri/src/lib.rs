@@ -90,6 +90,93 @@ async fn add_model_cmd(
 }
 
 #[tauri::command]
+async fn add_models_cmd(
+    window: tauri::Window,
+    source_paths: Vec<String>,
+) -> Result<Vec<config::YoloModel>, String> {
+    let total = source_paths.len();
+    let mut results = Vec::new();
+    let mut success_count = 0;
+    let mut failed_count = 0;
+    
+    // Emit start event for multiple models
+    if total > 1 {
+        let _ = window.emit("model-conversion-start", &format!("Adding {} models...", total));
+    }
+    
+    for (index, source_path) in source_paths.iter().enumerate() {
+        let path = std::path::Path::new(source_path).to_path_buf();
+        let name = path.file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("model")
+            .to_string();
+        
+        // Check if conversion is needed
+        let needs_conversion = path.extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.eq_ignore_ascii_case("pt"))
+            .unwrap_or(false);
+        
+        // Emit progress for current file
+        if total > 1 {
+            let progress_msg = if needs_conversion {
+                format!("[{}/{}] Converting {} to ONNX...", index + 1, total, name)
+            } else {
+                format!("[{}/{}] Adding {}...", index + 1, total, name)
+            };
+            let _ = window.emit("model-conversion-start", &progress_msg);
+        } else if needs_conversion {
+            let _ = window.emit("model-conversion-start", &format!("Converting {} to ONNX...", name));
+        }
+        
+        // Run in background thread
+        let name_clone = name.clone();
+        let path_clone = path.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        
+        std::thread::spawn(move || {
+            let result = config_add_model(name_clone.clone(), &path_clone);
+            let _ = tx.send(result);
+        });
+        
+        // Wait for result
+        let result = rx.recv().map_err(|e| format!("Thread error: {}", e))?;
+        
+        match result {
+            Ok(model) => {
+                results.push(model);
+                success_count += 1;
+                if needs_conversion {
+                    let _ = window.emit("model-conversion-done", &format!("[{}/{}] Successfully converted {}", index + 1, total, name));
+                }
+            }
+            Err(e) => {
+                failed_count += 1;
+                let error_msg = format!("[{}/{}] Failed to add {}: {}", index + 1, total, name, e);
+                let _ = window.emit("model-conversion-error", &error_msg);
+                // Continue with next file instead of returning error immediately
+            }
+        }
+    }
+    
+    // Emit final summary
+    if total > 1 {
+        let summary = format!("Completed: {} successful, {} failed out of {}", success_count, failed_count, total);
+        if failed_count == 0 {
+            let _ = window.emit("model-conversion-done", &summary);
+        } else {
+            let _ = window.emit("model-conversion-error", &summary);
+        }
+    }
+    
+    if results.is_empty() {
+        Err(format!("Failed to add any models. {} failed out of {}", failed_count, total))
+    } else {
+        Ok(results)
+    }
+}
+
+#[tauri::command]
 fn remove_model_cmd(id: i64) -> Result<(), String> {
     config_remove_model(id).map_err(|e| e.to_string())
 }
@@ -165,6 +252,7 @@ pub fn run() {
             save_config_cmd,
             list_models_cmd,
             add_model_cmd,
+            add_models_cmd,
             remove_model_cmd,
             set_active_model_cmd,
             run_processing_cmd,
