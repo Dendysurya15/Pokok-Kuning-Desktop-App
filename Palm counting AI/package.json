@@ -1,7 +1,7 @@
 {
   "name": "palm-counting-ai",
   "private": true,
-  "version": "0.1.0",
+  "version": "1.1.23",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -11,6 +11,7 @@
     "build:sidecar": "python src-tauri/scripts/build_python_sidecar.py",
     "build:placeholder": "python src-tauri/scripts/create_sidecar_placeholder.py",
     "build:full": "npm run build:sidecar && npm run tauri build",
+    "build:prod": "npm run build:sidecar && npm run tauri build",
     "tauri:dev": "npm run build:placeholder && npm run tauri dev",
     "tauri:build": "npm run tauri build",
     "predev": "npm run build:placeholder",
