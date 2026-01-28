@@ -18,12 +18,17 @@ use config::{
     set_active_model,
     AppConfig,
 };
-use specs::get_system_specs;
+use specs::{get_realtime_usage, get_system_specs};
 use std::sync::atomic::AtomicBool;
 
 #[tauri::command]
 fn get_specs() -> Result<specs::SystemSpecs, String> {
     Ok(get_system_specs())
+}
+
+#[tauri::command]
+fn get_realtime_usage_cmd() -> Result<specs::RealtimeUsage, String> {
+    Ok(get_realtime_usage())
 }
 
 #[tauri::command]
@@ -279,6 +284,7 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .invoke_handler(tauri::generate_handler![
             get_specs,
+            get_realtime_usage_cmd,
             load_config_cmd,
             save_config_cmd,
             list_models_cmd,

@@ -132,15 +132,20 @@ export function SettingsPage() {
                 />
                 <span className="text-sm">Convert KML</span>
               </label>
-              <label className="flex items-center gap-2 cursor-pointer">
-                <Checkbox
-                  checked={config.convert_shp !== "false"}
-                  onCheckedChange={(c) =>
-                    update("convert_shp", c ? "true" : "false")
-                  }
-                />
-                <span className="text-sm">Convert Shapefile</span>
-              </label>
+              <div className="space-y-1">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <Checkbox
+                    checked={config.convert_shp !== "false"}
+                    onCheckedChange={(c) =>
+                      update("convert_shp", c ? "true" : "false")
+                    }
+                  />
+                  <span className="text-sm">Convert Shapefile</span>
+                </label>
+                <p className="text-xs text-muted-foreground pl-6">
+                  Shapefile and KML require a .tfw next to each TIFF (same base name, e.g. UPE.tfw for UPE.tif). Add pairs via &quot;Add TIFF + TFW&quot; on Dashboard.
+                </p>
+              </div>
               <label className="flex items-center gap-2 cursor-pointer">
                 <Checkbox
                   checked={config.save_annotated !== "false"}

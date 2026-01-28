@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
-import { openPath } from "@tauri-apps/plugin-opener";
+import { openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
@@ -16,6 +16,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { Input } from "@/components/ui/input";
 import { FolderOpen, Trash2, Plus, Play } from "lucide-react";
 import { useProcessingStore } from "@/stores/processing";
 
@@ -52,6 +53,58 @@ interface TiffEntry {
   checked: boolean;
 }
 
+interface TiffTfwGroup {
+  name: string;
+  tifPath: string;
+  tfwPath: string;
+}
+
+function stem(p: string): string {
+  const b = p.split(/[/\\]/).pop() ?? p;
+  return b.replace(/\.(tif|tiff|tfw)$/i, "");
+}
+
+function normalizePathForLookup(p: string): string {
+  return p.replace(/\//g, "\\").replace(/\\\\+/g, "\\").toLowerCase();
+}
+
+function getOutputFolder(
+  tifPath: string,
+  folders: Record<string, string>
+): string | undefined {
+  if (folders[tifPath]) return folders[tifPath];
+  const n = normalizePathForLookup(tifPath);
+  const e = Object.entries(folders).find(([k]) => normalizePathForLookup(k) === n);
+  return e?.[1];
+}
+
+function parseTiffTfwPairs(paths: string[]): TiffTfwGroup[] {
+  const groups = new Map<string, { tif?: string; tfw?: string }>();
+  for (const p of paths) {
+    const dir = p.replace(/[/\\][^/\\]*$/, "");
+    const base = stem(p);
+    const key = dir + "\0" + base;
+    if (!groups.has(key)) groups.set(key, {});
+    const g = groups.get(key)!;
+    if (/\.(tif|tiff)$/i.test(p)) g.tif = p;
+    else if (/\.tfw$/i.test(p)) g.tfw = p;
+  }
+  const out: TiffTfwGroup[] = [];
+  for (const [, g] of groups) {
+    if (g.tif && g.tfw)
+      out.push({ name: stem(g.tif), tifPath: g.tif, tfwPath: g.tfw });
+  }
+  return out;
+}
+
+interface RealtimeUsage {
+  cpu_percent: number;
+  gpu_percent?: number;
+  gpu_memory_used_mb?: number;
+  gpu_memory_total_mb?: number;
+  gpu_temp_c?: number;
+}
+
 export function Dashboard() {
   const running = useProcessingStore((s) => s.running);
   const outputFolders = useProcessingStore((s) => s.outputFolders);
@@ -64,6 +117,13 @@ export function Dashboard() {
   const [activeModelId, setActiveModelId] = useState<string>("");
   const [, setConfig] = useState<AppConfig>({});
   const [specs, setSpecs] = useState<SystemSpecs | null>(null);
+  const [usage, setUsage] = useState<RealtimeUsage | null>(null);
+  const [addGroupModal, setAddGroupModal] = useState<{
+    name: string;
+    tifPath: string;
+    tfwPath: string;
+  } | null>(null);
+  const [addGroupName, setAddGroupName] = useState("");
 
   const load = useCallback(async () => {
     try {
@@ -90,23 +150,80 @@ export function Dashboard() {
     load();
   }, [load]);
 
-  const pickTiff = async () => {
+  useEffect(() => {
+    let cancelled = false;
+    const poll = async () => {
+      if (cancelled) return;
+      try {
+        const u = await invoke<RealtimeUsage>("get_realtime_usage_cmd");
+        if (!cancelled) setUsage(u);
+      } catch {
+        /* ignore */
+      }
+    };
+    void poll();
+    const id = setInterval(poll, 1500);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, []);
+
+  const pickTiffTfw = async () => {
     const selected = await open({
       multiple: true,
-      filters: [{ name: "TIFF", extensions: ["tif", "tiff"] }],
+      filters: [
+        { name: "TIFF / TFW", extensions: ["tif", "tiff", "tfw"] },
+      ],
     });
     if (!selected) return;
-    const files = Array.isArray(selected) ? selected : [selected];
+    const files = (Array.isArray(selected) ? selected : [selected]) as string[];
+    const pairs = parseTiffTfwPairs(files);
     const existing = new Set(tiffList.map((t) => t.path));
-    const toAdd = files.filter((p) => !existing.has(p));
-    if (toAdd.length === 0) return;
+    const toAdd = pairs.filter((p) => !existing.has(p.tifPath));
+    if (toAdd.length === 0) {
+      if (pairs.length === 0)
+        appendLog(
+          "Select matching .tif and .tfw pairs (same folder, same base name, e.g. UPE.tif + UPE.tfw)."
+        );
+      else appendLog("All selected groups are already in the list.");
+      return;
+    }
+    if (toAdd.length === 1) {
+      openAddGroupModal({
+        name: toAdd[0].name,
+        tifPath: toAdd[0].tifPath,
+        tfwPath: toAdd[0].tfwPath,
+      });
+      return;
+    }
     try {
-      await invoke("add_tiff_paths_cmd", { paths: toAdd });
-      const added: TiffEntry[] = toAdd.map((path) => ({ path, checked: false }));
+      await invoke("add_tiff_paths_cmd", { paths: toAdd.map((p) => p.tifPath) });
+      const added: TiffEntry[] = toAdd.map((p) => ({ path: p.tifPath, checked: false }));
       setTiffList((prev) => [...prev, ...added]);
+      appendLog(`Added ${toAdd.length} groups: ${toAdd.map((p) => p.name).join(", ")}.`);
     } catch (e) {
       appendLog(`Error saving TIFF list: ${e}`);
     }
+  };
+
+  const confirmAddGroup = async () => {
+    if (!addGroupModal) return;
+    const name = addGroupName.trim() || addGroupModal.name;
+    const { tifPath } = addGroupModal;
+    try {
+      await invoke("add_tiff_paths_cmd", { paths: [tifPath] });
+      setTiffList((prev) => [...prev, { path: tifPath, checked: false }]);
+      appendLog(`Added group "${name}" (${addGroupModal.name}.tif + ${addGroupModal.name}.tfw).`);
+    } catch (e) {
+      appendLog(`Error saving: ${e}`);
+    }
+    setAddGroupModal(null);
+  };
+
+  const openAddGroupModal = (m: { name: string; tifPath: string; tfwPath: string }) => {
+    setAddGroupModal(m);
+    setAddGroupName(m.name);
   };
 
   const removeTiff = async (path: string) => {
@@ -154,9 +271,22 @@ export function Dashboard() {
     }
   };
 
-  const openResultFolder = (path: string) => {
-    const out = outputFolders[path];
-    if (out) openPath(out);
+  const openResultFolder = async (path: string) => {
+    const out = getOutputFolder(path, outputFolders);
+    appendLog(`Open result folder: ${path.split(/[/\\]/).pop() ?? path}`);
+    if (!out) {
+      appendLog("No result folder for this file. Run processing first.");
+      return;
+    }
+    try {
+      await openPath(out);
+    } catch (e1) {
+      try {
+        await revealItemInDir(out);
+      } catch (e2) {
+        appendLog(`Could not open folder: ${e1}`);
+      }
+    }
   };
 
   return (
@@ -201,6 +331,41 @@ export function Dashboard() {
                 </div>
               </dl>
             )}
+            {usage && (
+              <div className="rounded-md border border-border/50 bg-muted/20 px-2.5 py-2 space-y-1">
+                <p className="text-xs font-medium text-muted-foreground">Live</p>
+                <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs">
+                  <span>
+                    CPU{" "}
+                    <span className="font-mono font-medium">
+                      {usage.cpu_percent.toFixed(1)}%
+                    </span>
+                  </span>
+                  {usage.gpu_percent != null && (
+                    <span>
+                      GPU{" "}
+                      <span className="font-mono font-medium">
+                        {usage.gpu_percent}%
+                      </span>
+                      {usage.gpu_memory_used_mb != null &&
+                        usage.gpu_memory_total_mb != null && (
+                          <span className="text-muted-foreground">
+                            {" "}
+                            ({(usage.gpu_memory_used_mb / 1024).toFixed(1)} /{" "}
+                            {(usage.gpu_memory_total_mb / 1024).toFixed(1)} GB)
+                          </span>
+                        )}
+                      {usage.gpu_temp_c != null && (
+                        <span className="text-muted-foreground">
+                          {" "}
+                          {usage.gpu_temp_c}°C
+                        </span>
+                      )}
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
             <div className="flex justify-between gap-2 pt-1 border-t border-border/50">
               <span className="text-muted-foreground">TIFF files</span>
               <span className="font-medium">{tiffList.length}</span>
@@ -229,15 +394,17 @@ export function Dashboard() {
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={pickTiff}
+                    onClick={pickTiffTfw}
                     disabled={running}
                     className="gap-2"
                   >
                     <Plus className="h-4 w-4" />
-                    Add TIFF
+                    Add TIFF + TFW
                   </Button>
                 </TooltipTrigger>
-                <TooltipContent>Pick .tif / .tiff files to process</TooltipContent>
+                <TooltipContent>
+                  Select .tif and .tfw pairs (same folder, same base name, e.g. UPE.tif + UPE.tfw)
+                </TooltipContent>
               </Tooltip>
             </div>
             <div className="space-y-2">
@@ -262,6 +429,35 @@ export function Dashboard() {
                 </SelectContent>
               </Select>
             </div>
+            {addGroupModal && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+                <Card className="w-full max-w-sm border-border bg-card p-4 shadow-lg">
+                  <p className="text-sm font-medium mb-2">Add group</p>
+                  <p className="text-xs text-muted-foreground mb-2">
+                    {addGroupModal.name}.tif + {addGroupModal.name}.tfw
+                  </p>
+                  <Label className="text-xs text-muted-foreground">Group name (e.g. UPE)</Label>
+                  <Input
+                    value={addGroupName}
+                    onChange={(e) => setAddGroupName(e.target.value)}
+                    placeholder={addGroupModal.name}
+                    className="mt-1 mb-4"
+                  />
+                  <div className="flex justify-end gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setAddGroupModal(null)}
+                    >
+                      Cancel
+                    </Button>
+                    <Button size="sm" onClick={confirmAddGroup}>
+                      Add
+                    </Button>
+                  </div>
+                </Card>
+              </div>
+            )}
             {tiffList.length > 0 && (
               <div className="space-y-2">
                 <div className="flex items-center gap-2">
@@ -294,22 +490,22 @@ export function Dashboard() {
                           className="flex-1 truncate font-mono text-xs"
                           title={t.path}
                         >
-                          {t.path.split(/[/\\]/).pop() ?? t.path}
+                          {(() => {
+                            const base = t.path.split(/[/\\]/).pop() ?? t.path;
+                            const s = stem(t.path);
+                            return `${s} (${base} + ${s}.tfw)`;
+                          })()}
                         </span>
-                        {outputFolders[t.path] && (
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-7 w-7 shrink-0"
-                                onClick={() => openResultFolder(t.path)}
-                              >
-                                <FolderOpen className="h-4 w-4" />
-                              </Button>
-                            </TooltipTrigger>
-                            <TooltipContent>Open result folder</TooltipContent>
-                          </Tooltip>
+                        {getOutputFolder(t.path, outputFolders) && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 shrink-0"
+                            title="Open result folder"
+                            onClick={() => openResultFolder(t.path)}
+                          >
+                            <FolderOpen className="h-4 w-4" />
+                          </Button>
                         )}
                         <Tooltip>
                           <TooltipTrigger asChild>

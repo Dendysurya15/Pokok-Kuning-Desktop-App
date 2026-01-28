@@ -1,7 +1,7 @@
-//! System specs (CPU, RAM, GPU) for status UI.
+//! System specs (CPU, RAM, GPU) and real-time CPU/GPU usage for status UI.
 
 use serde::Serialize;
-use sysinfo::System;
+use sysinfo::{CpuRefreshKind, RefreshKind, System};
 
 #[derive(Debug, Serialize)]
 pub struct SystemSpecs {
@@ -86,5 +86,67 @@ fn gpu_info_nvidia_smi() -> (String, String) {
             (name, mem)
         }
         _ => ("No CUDA GPU".into(), "".into()),
+    }
+}
+
+/// Real-time CPU and GPU usage (for live monitoring in UI).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RealtimeUsage {
+    pub cpu_percent: f32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gpu_percent: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gpu_memory_used_mb: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gpu_memory_total_mb: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gpu_temp_c: Option<u32>,
+}
+
+/// Sample CPU usage (sysinfo) and GPU utilization/memory/temp (nvidia-smi).
+/// Call every 1–2 s for live stats. First CPU read may be low; subsequent calls improve.
+pub fn get_realtime_usage() -> RealtimeUsage {
+    let cpu_percent = {
+        let mut sys = System::new_with_specifics(
+            RefreshKind::new().with_cpu(CpuRefreshKind::everything()),
+        );
+        std::thread::sleep(sysinfo::MINIMUM_CPU_UPDATE_INTERVAL);
+        sys.refresh_cpu_usage();
+        sys.global_cpu_usage()
+    };
+
+    let (gpu_percent, gpu_mem_used, gpu_mem_total, gpu_temp) = gpu_realtime_nvidia_smi();
+
+    RealtimeUsage {
+        cpu_percent,
+        gpu_percent,
+        gpu_memory_used_mb: gpu_mem_used,
+        gpu_memory_total_mb: gpu_mem_total,
+        gpu_temp_c: gpu_temp,
+    }
+}
+
+fn gpu_realtime_nvidia_smi() -> (Option<u32>, Option<u64>, Option<u64>, Option<u32>) {
+    let out = std::process::Command::new("nvidia-smi")
+        .args([
+            "--query-gpu=utilization.gpu,memory.used,memory.total,temperature.gpu",
+            "--format=csv,noheader,nounits",
+        ])
+        .output();
+    match out {
+        Ok(o) if o.status.success() => {
+            let s = String::from_utf8_lossy(&o.stdout);
+            let line = s.lines().next().unwrap_or("").trim();
+            if line.is_empty() {
+                return (None, None, None, None);
+            }
+            let parts: Vec<&str> = line.split(',').map(|x| x.trim()).collect();
+            let pct = parts.get(0).and_then(|x| x.parse::<u32>().ok());
+            let used = parts.get(1).and_then(|x| x.parse::<u64>().ok());
+            let total = parts.get(2).and_then(|x| x.parse::<u64>().ok());
+            let temp = parts.get(3).and_then(|x| x.parse::<u32>().ok());
+            (pct, used, total, temp)
+        }
+        _ => (None, None, None, None),
     }
 }

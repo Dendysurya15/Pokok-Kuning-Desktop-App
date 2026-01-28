@@ -182,6 +182,7 @@ def infer_mode() -> None:
     conf = float(config.get("conf", 0.2))
     iou = float(config.get("iou", 0.2))
     max_det = int(config.get("max_det", 10000))
+    device_pref = config.get("device", "auto").lower()
     convert_kml = config.get("convert_kml", "false").lower() == "true"
     convert_shp = config.get("convert_shp", "false").lower() == "true"
     save_annotated = config.get("save_annotated", "true").lower() == "true"
@@ -192,21 +193,45 @@ def infer_mode() -> None:
     try:
         from ultralytics import YOLO
         import torch
-
-        if not torch.cuda.is_available():
-            log_error("GPU (CUDA) is required. No CUDA device found.")
-            sys.exit(1)
-        device = "cuda"
-        safe_print(f"Using CUDA: {torch.cuda.get_device_name(0)}")
-
+        
+        # Device selection
+        if device_pref == "cpu":
+            device = "cpu"
+            safe_print(f"Using CPU (user selection)")
+        elif device_pref == "cuda":
+            if torch.cuda.is_available():
+                device = "cuda"
+                safe_print(f"Using CUDA: {torch.cuda.get_device_name(0)}")
+            else:
+                device = "cpu"
+                safe_print(f"CUDA requested but not available, using CPU")
+        else:  # auto
+            if torch.cuda.is_available():
+                device = "cuda"
+                safe_print(f"Auto-detected CUDA: {torch.cuda.get_device_name(0)}")
+            else:
+                device = "cpu"
+                safe_print(f"CUDA not available, using CPU")
+        
+        # Load model
         safe_print(f"Loading YOLO model: {model_path}")
         model = YOLO(model_path)
-        torch.cuda.empty_cache()
-        model.to(device)
-        test_tensor = torch.zeros(1, device="cuda")
-        del test_tensor
-        torch.cuda.synchronize()
-        safe_print("Model loaded on GPU successfully")
+        
+        if device == "cuda":
+            try:
+                torch.cuda.empty_cache()
+                model.to(device)
+                # Test CUDA
+                test_tensor = torch.zeros(1, device='cuda')
+                del test_tensor
+                torch.cuda.synchronize()
+                safe_print(f"Model loaded on GPU successfully")
+            except Exception as e:
+                safe_print(f"CUDA error, falling back to CPU: {e}")
+                device = "cpu"
+                model = YOLO(model_path)
+        else:
+            safe_print(f"Model loaded on CPU")
     except Exception as e:
         log_error(f"Failed to load model: {e}")
         import traceback
@@ -245,17 +270,34 @@ def infer_mode() -> None:
             # Use temp RGB image if created
             processing_path = temp_path if temp_path else image_path
             
-            # Run YOLO prediction (GPU only)
-            results = model.predict(
-                source=processing_path,
-                imgsz=imgsz,
-                conf=conf,
-                iou=iou,
-                max_det=max_det,
-                device=device,
-                verbose=False,
-                save=False,
-            )
+            # Run YOLO prediction
+            try:
+                results = model.predict(
+                    source=processing_path,
+                    imgsz=imgsz,
+                    conf=conf,
+                    iou=iou,
+                    max_det=max_det,
+                    device=device,
+                    verbose=False,
+                    save=False
+                )
+            except Exception as pred_error:
+                safe_print(f"  ⚠️  Prediction failed: {pred_error}")
+                if device == "cuda":
+                    safe_print(f"  Retrying on CPU...")
+                    results = model.predict(
+                        source=processing_path,
+                        imgsz=imgsz,
+                        conf=conf,
+                        iou=iou,
+                        max_det=max_det,
+                        device="cpu",
+                        verbose=False,
+                        save=False
+                    )
+                else:
+                    raise pred_error
 
             # Count detections
             abnormal_count = 0
@@ -297,11 +339,10 @@ def infer_mode() -> None:
                 except Exception:
                     pass
             
-            # Create and save GeoJSON (only if .tfw exists)
+            # Create and save GeoJSON/KML/Shapefile only when .tfw exists
             if tfw_params and detections_list:
                 labels = model.names
                 pixel_size_x, rotation_x, rotation_y, pixel_size_y, upper_left_x, upper_left_y = tfw_params
-                
                 features = []
                 for det in detections_list:
                     try:
@@ -310,10 +351,8 @@ def infer_mode() -> None:
                         map_x = upper_left_x + center_x * pixel_size_x
                         map_y = upper_left_y + center_y * pixel_size_y
                         point = Point(map_x, map_y)
-                        
                         class_id = det['class_id']
                         label = labels.get(class_id, f"class_{class_id}")
-                        
                         feature = geojson.Feature(
                             geometry=mapping(point),
                             properties={
@@ -325,7 +364,6 @@ def infer_mode() -> None:
                         features.append(feature)
                     except Exception:
                         continue
-                
                 if features:
                     fc = geojson.FeatureCollection(features)
                     geojson_path = os.path.join(folder_path, os.path.splitext(image_file)[0] + ".geojson")
@@ -374,8 +412,12 @@ def infer_mode() -> None:
                         except Exception as e:
                             safe_print(f"  ✗ Shapefile conversion failed: {e}")
             elif not tfw_params:
-                safe_print(f"  ⚠️  No .tfw file found, skipping geospatial output")
-            
+                safe_print(
+                    "  Shapefile, KML, and GeoJSON require a .tfw file next to the TIFF "
+                    "(same base name, e.g. UPE.tfw for UPE.tif). Skipping geospatial output."
+                )
+            elif not detections_list:
+                safe_print("  No detections; skipping geospatial output.")
             # Save annotated image if requested
             if save_annotated and results:
                 try:
@@ -454,7 +496,8 @@ def infer_mode() -> None:
             # Memory cleanup
             if (index + 1) % 5 == 0:
                 gc.collect()
-                torch.cuda.empty_cache()
+                if device == "cuda":
+                    torch.cuda.empty_cache()
             
             # Output progress as JSON (for Rust to parse)
             progress = {
@@ -536,6 +579,7 @@ def infer_files_mode() -> None:
     conf = float(config.get("conf", 0.2))
     iou = float(config.get("iou", 0.2))
     max_det = int(config.get("max_det", 10000))
+    device_pref = config.get("device", "auto").lower()
     convert_kml = config.get("convert_kml", "false").lower() == "true"
     convert_shp = config.get("convert_shp", "false").lower() == "true"
     save_annotated = config.get("save_annotated", "true").lower() == "true"
@@ -545,17 +589,41 @@ def infer_files_mode() -> None:
     try:
         from ultralytics import YOLO
         import torch
-
-        if not torch.cuda.is_available():
-            log_error("GPU (CUDA) is required. No CUDA device found.")
-            sys.exit(1)
-        device = "cuda"
-        safe_print(f"Using CUDA: {torch.cuda.get_device_name(0)}")
+        
+        # Device selection
+        if device_pref == "cpu":
+            device = "cpu"
+            safe_print(f"Using CPU (user selection)")
+        elif device_pref == "cuda":
+            if torch.cuda.is_available():
+                device = "cuda"
+                safe_print(f"Using CUDA: {torch.cuda.get_device_name(0)}")
+            else:
+                device = "cpu"
+                safe_print(f"CUDA requested but not available, using CPU")
+        else:  # auto
+            if torch.cuda.is_available():
+                device = "cuda"
+                safe_print(f"Auto-detected CUDA: {torch.cuda.get_device_name(0)}")
+            else:
+                device = "cpu"
+                safe_print(f"CUDA not available, using CPU")
+        
+        # Load model
         safe_print(f"Loading YOLO model: {model_path}")
         model = YOLO(model_path)
-        torch.cuda.empty_cache()
-        model.to(device)
-        safe_print("Model loaded on GPU successfully")
+        
+        if device == "cuda":
+            try:
+                torch.cuda.empty_cache()
+                model.to(device)
+                safe_print("Model loaded on GPU successfully")
+            except Exception as e:
+                safe_print(f"CUDA error, falling back to CPU: {e}")
+                device = "cpu"
+                model = YOLO(model_path)
+        else:
+            safe_print(f"Model loaded on CPU")
     except Exception as e:
         log_error(f"Failed to load model: {e}")
         import traceback
@@ -737,7 +805,12 @@ def infer_files_mode() -> None:
                         except Exception as e:
                             safe_print(f"  ✗ Shapefile conversion failed: {e}")
             elif not tfw_params:
-                safe_print("  ⚠️  No .tfw file found, skipping geospatial output")
+                safe_print(
+                    "  Shapefile, KML, and GeoJSON require a .tfw file next to the TIFF "
+                    "(same base name, e.g. UPE.tfw for UPE.tif). Skipping geospatial output."
+                )
+            elif not detections_list:
+                safe_print("  No detections; skipping geospatial output.")
             if save_annotated and results:
                 try:
                     img = cv2.imread(image_path)
@@ -790,7 +863,8 @@ def infer_files_mode() -> None:
             }), flush=True)
         if (index + 1) % 5 == 0:
             gc.collect()
-            torch.cuda.empty_cache()
+            if device == "cuda":
+                torch.cuda.empty_cache()
     summary = {
         "done": True, "successful": successful, "failed": failed, "total": total_files,
         "total_abnormal": total_abnormal, "total_normal": total_normal,
