@@ -7,10 +7,29 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::thread;
 
 const IMAGE_EXT: [&str; 6] = [".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"];
 
 fn infer_worker_path() -> std::path::PathBuf {
+    // Coba gunakan sidecar terlebih dahulu (untuk production build)
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(exe_dir) = exe.parent() {
+            // Sidecar biasanya di directory yang sama dengan executable
+            let sidecar = exe_dir.join("infer_worker.exe");
+            if sidecar.exists() {
+                return sidecar;
+            }
+            // Atau di subdirectory binaries
+            let sidecar_bin = exe_dir.join("binaries").join("infer_worker.exe");
+            if sidecar_bin.exists() {
+                return sidecar_bin;
+            }
+        }
+    }
+    
+    // Fallback ke Python script (untuk development)
     let manifest = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".into());
     let base = Path::new(&manifest).parent().unwrap_or(Path::new("."));
     base.join("python_ai").join("infer_worker.py")
@@ -84,8 +103,32 @@ pub fn run_processing(
     }
 
     let worker = infer_worker_path();
+    let mut is_sidecar = worker.extension().map(|e| e == "exe").unwrap_or(false);
+    
     if !worker.exists() {
-        return Err(format!("Inference worker not found: {}", worker.display()).into());
+        return Err(format!("Inference worker not found: {}\n\nUntuk development: pastikan python_ai/infer_worker.py ada.\nUntuk production: jalankan scripts/build_python_sidecar.py terlebih dahulu.", worker.display()).into());
+    }
+    
+    // Deteksi apakah sidecar valid (bukan placeholder)
+    // Placeholder biasanya sangat kecil (< 1KB), sedangkan real sidecar > 100MB
+    if is_sidecar {
+        if let Ok(metadata) = std::fs::metadata(&worker) {
+            let size = metadata.len();
+            // Jika file terlalu kecil (< 1MB), kemungkinan placeholder
+            if size < 1_000_000 {
+                on_log(&format!("Sidecar terlalu kecil ({} bytes), kemungkinan placeholder. Fallback ke Python script.", size));
+                is_sidecar = false;
+                // Update worker path ke Python script
+                let manifest = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".into());
+                let base = Path::new(&manifest).parent().unwrap_or(Path::new("."));
+                let python_script = base.join("python_ai").join("infer_worker.py");
+                if python_script.exists() {
+                    // worker akan di-update di bawah
+                } else {
+                    return Err(format!("Python script tidak ditemukan: {}", python_script.display()).into());
+                }
+            }
+        }
     }
 
     let imgsz: i32 = config.imgsz.parse().unwrap_or(1280);
@@ -99,10 +142,44 @@ pub fn run_processing(
     let save_annotated = config.save_annotated.eq_ignore_ascii_case("true");
     let line_width: u32 = config.line_width.parse().unwrap_or(3).max(1);
 
-    let python = which_python();
-    let mut child = Command::new(&python)
-        .arg(&worker)
-        .current_dir(worker.parent().unwrap())
+    // Verify model file exists
+    if !Path::new(model_path).is_file() {
+        return Err(format!("Model file not found: {}", model_path).into());
+    }
+    
+    // Jika sidecar (exe), langsung jalankan. Jika Python script, perlu Python interpreter.
+    let mut cmd = if is_sidecar {
+        on_log(&format!("Using Python sidecar: {}", worker.display()));
+        Command::new(&worker)
+    } else {
+        // Fallback ke Python script (untuk development atau jika sidecar tidak valid)
+        let manifest = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".into());
+        let base = Path::new(&manifest).parent().unwrap_or(Path::new("."));
+        let python_script = base.join("python_ai").join("infer_worker.py");
+        
+        if !python_script.exists() {
+            return Err(format!("Python script tidak ditemukan: {}", python_script.display()).into());
+        }
+        let python = which_python();
+        // Verify Python is available
+        let test_output = Command::new(&python)
+            .arg("-c")
+            .arg("import sys; sys.path.insert(0, '.'); import json; print('OK')")
+            .current_dir(python_script.parent().unwrap())
+            .output();
+        
+        if test_output.is_err() || !test_output.unwrap().status.success() {
+            on_log(&format!("Warning: Python test failed. Using: {}", python));
+        }
+        
+        on_log(&format!("Using Python script: {} {}", python, python_script.display()));
+        let mut py_cmd = Command::new(&python);
+        py_cmd.arg(&python_script);
+        py_cmd.current_dir(python_script.parent().unwrap());
+        py_cmd
+    };
+    
+    let mut child = cmd
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -110,6 +187,24 @@ pub fn run_processing(
 
     let mut stdin = child.stdin.take().ok_or("stdin")?;
     let stdout = child.stdout.take().ok_or("stdout")?;
+    let stderr = child.stderr.take().ok_or("stderr")?;
+    
+    // Spawn thread to read stderr and collect in shared buffer
+    let stderr_buffer: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let stderr_buffer_clone = Arc::clone(&stderr_buffer);
+    let stderr_handle = thread::spawn(move || {
+        let reader = BufReader::new(stderr);
+        let mut error_lines = Vec::new();
+        for line in reader.lines() {
+            if let Ok(l) = line {
+                error_lines.push(l.clone());
+                if let Ok(mut buf) = stderr_buffer_clone.lock() {
+                    buf.push(l);
+                }
+            }
+        }
+    });
+    
     let mut reader = BufReader::new(stdout);
 
     let mut successful = 0_usize;
@@ -161,6 +256,13 @@ pub fn run_processing(
         let mut line = String::new();
         if reader.read_line(&mut line)? == 0 {
             on_log("  Worker closed stdout.");
+            // Check for stderr messages collected so far
+            if let Ok(buf) = stderr_buffer.lock() {
+                if !buf.is_empty() {
+                    let err_msg = buf.join("\n");
+                    on_log(&format!("  Python stderr: {}", err_msg));
+                }
+            }
             failed += 1;
             break;
         }
@@ -246,7 +348,21 @@ pub fn run_processing(
     }
 
     drop(stdin);
-    let _ = child.wait();
+    let status = child.wait();
+    // Wait for stderr thread to finish
+    let _ = stderr_handle.join();
+    // Get final stderr messages
+    if let Ok(buf) = stderr_buffer.lock() {
+        if !buf.is_empty() {
+            let err_msg = buf.join("\n");
+            on_log(&format!("Python worker stderr: {}", err_msg));
+        }
+    }
+    if let Ok(exit_status) = status {
+        if !exit_status.success() {
+            on_log(&format!("Python worker exited with code: {:?}", exit_status.code()));
+        }
+    }
     on_log(&format!(
         "Done. {} succeeded, {} failed.",
         successful, failed

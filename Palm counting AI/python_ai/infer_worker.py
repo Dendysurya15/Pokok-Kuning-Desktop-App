@@ -8,6 +8,11 @@ import json
 import os
 import sys
 
+# Redirect stderr to help with debugging
+def log_error(msg: str) -> None:
+    """Log error to stderr (will be captured by Rust)"""
+    print(f"ERROR: {msg}", file=sys.stderr, flush=True)
+
 
 def preprocess_image(image_path: str) -> tuple[bool, str | None]:
     """
@@ -31,7 +36,15 @@ def preprocess_image(image_path: str) -> tuple[bool, str | None]:
 
 
 def main() -> None:
-    from ultralytics import YOLO
+    try:
+        from ultralytics import YOLO
+    except ImportError as e:
+        log_error(f"Failed to import ultralytics: {e}")
+        log_error("Please install: pip install ultralytics")
+        sys.exit(1)
+    except Exception as e:
+        log_error(f"Unexpected import error: {e}")
+        sys.exit(1)
 
     cached_path: str | None = None
     cached_model: "YOLO | None" = None
@@ -40,8 +53,14 @@ def main() -> None:
         nonlocal cached_path, cached_model
         path = os.path.abspath(path)
         if path != cached_path:
-            cached_model = YOLO(path)
-            cached_path = path
+            if not os.path.isfile(path):
+                raise FileNotFoundError(f"Model file not found: {path}")
+            try:
+                cached_model = YOLO(path)
+                cached_path = path
+            except Exception as e:
+                log_error(f"Failed to load model {path}: {e}")
+                raise
         assert cached_model is not None
         return cached_model
 
@@ -52,6 +71,7 @@ def main() -> None:
         try:
             req = json.loads(line)
         except json.JSONDecodeError as e:
+            log_error(f"Invalid JSON input: {e}")
             out = {"detections": [], "error": f"Invalid JSON: {e}"}
             print(json.dumps(out), flush=True)
             continue
@@ -72,10 +92,14 @@ def main() -> None:
         max_det = int(req.get("max_det", 10000))
 
         if not image_path or not os.path.isfile(image_path):
-            print(json.dumps({"detections": [], "error": "Missing or invalid image path"}), flush=True)
+            err_msg = f"Missing or invalid image path: {image_path}"
+            log_error(err_msg)
+            print(json.dumps({"detections": [], "error": err_msg}), flush=True)
             continue
         if not model_path or not os.path.isfile(model_path):
-            print(json.dumps({"detections": [], "error": "Missing or invalid model path"}), flush=True)
+            err_msg = f"Missing or invalid model path: {model_path}"
+            log_error(err_msg)
+            print(json.dumps({"detections": [], "error": err_msg}), flush=True)
             continue
 
         temp_path: str | None = None
@@ -133,6 +157,9 @@ def main() -> None:
 
             print(json.dumps({"detections": detections, "error": None}), flush=True)
         except Exception as e:
+            import traceback
+            error_trace = traceback.format_exc()
+            log_error(f"Exception during inference: {e}\n{error_trace}")
             print(json.dumps({"detections": [], "error": str(e)}), flush=True)
         finally:
             if temp_path and os.path.isfile(temp_path):
