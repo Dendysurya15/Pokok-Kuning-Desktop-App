@@ -255,17 +255,98 @@ pub fn list_models() -> Result<Vec<YoloModel>, Box<dyn std::error::Error + Send 
 pub fn add_model(name: String, source_path: &Path) -> Result<YoloModel, Box<dyn std::error::Error + Send + Sync>> {
     setup_db()?;
     std::fs::create_dir_all(models_dir())?;
-    let base = source_path
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or("model");
-    let dest = models_dir().join(base);
-    let dest = unique_path(&dest);
-    std::fs::copy(source_path, &dest)?;
-    let path = dest.to_string_lossy().into_owned();
+    
+    let is_pt = source_path.extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.eq_ignore_ascii_case("pt"))
+        .unwrap_or(false);
+    
+    let is_onnx = source_path.extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.eq_ignore_ascii_case("onnx"))
+        .unwrap_or(false);
+    
+    let final_path = if is_pt {
+        // Auto-convert .pt to .onnx
+        let base = source_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("model");
+        let onnx_dest = models_dir().join(format!("{}.onnx", base));
+        let onnx_dest = unique_path_with_ext(&onnx_dest, "onnx");
+        
+        // Copy .pt first (keep original)
+        let pt_dest = models_dir().join(format!("{}.pt", base));
+        let pt_dest = unique_path_with_ext(&pt_dest, "pt");
+        std::fs::copy(source_path, &pt_dest)?;
+        
+        // Convert to ONNX using Python sidecar
+        let imgsz = load_config()
+            .map(|c| c.imgsz.parse::<u32>().unwrap_or(1280))
+            .unwrap_or(1280);
+        
+        // Try to use sidecar Python worker for conversion
+        let sidecar_path = get_sidecar_python_path();
+        let conversion_success = if sidecar_path.exists() {
+            // Use sidecar Python worker with --convert mode
+            let output = std::process::Command::new(&sidecar_path)
+                .arg("--convert")
+                .arg(&pt_dest)
+                .arg(&onnx_dest)
+                .arg(&imgsz.to_string())
+                .output();
+            
+            match output {
+                Ok(o) if o.status.success() && onnx_dest.exists() => {
+                    true
+                }
+                Ok(o) => {
+                    // Log stderr if available
+                    let stderr = String::from_utf8_lossy(&o.stderr);
+                    if !stderr.is_empty() {
+                        eprintln!("Conversion stderr: {}", stderr);
+                    }
+                    false
+                }
+                Err(e) => {
+                    eprintln!("Failed to run sidecar for conversion: {}", e);
+                    false
+                }
+            }
+        } else {
+            false
+        };
+        
+        if conversion_success {
+            onnx_dest.to_string_lossy().into_owned()
+        } else {
+            // Conversion failed, use .pt
+            pt_dest.to_string_lossy().into_owned()
+        }
+    } else if is_onnx {
+        // Already ONNX, just copy
+        let base = source_path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("model");
+        let dest = models_dir().join(base);
+        let dest = unique_path(&dest);
+        std::fs::copy(source_path, &dest)?;
+        dest.to_string_lossy().into_owned()
+    } else {
+        // Unknown format, copy as-is
+        let base = source_path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("model");
+        let dest = models_dir().join(base);
+        let dest = unique_path(&dest);
+        std::fs::copy(source_path, &dest)?;
+        dest.to_string_lossy().into_owned()
+    };
 
     let conn = open_db()?;
-    conn.execute("INSERT INTO yolo_models (name, path) VALUES (?1, ?2)", [&name, &path])?;
+    conn.execute("INSERT INTO yolo_models (name, path) VALUES (?1, ?2)", [&name, &final_path])?;
     let id = conn.last_insert_rowid();
     let active: Option<i64> = conn
         .query_row("SELECT active_model_id FROM configuration ORDER BY id DESC LIMIT 1", [], |r| {
@@ -276,9 +357,62 @@ pub fn add_model(name: String, source_path: &Path) -> Result<YoloModel, Box<dyn 
     Ok(YoloModel {
         id,
         name,
-        path,
+        path: final_path,
         is_active: active == Some(id),
     })
+}
+
+/// Get Python sidecar path (hanya sidecar, tidak ada fallback)
+fn get_sidecar_python_path() -> PathBuf {
+    // Hanya gunakan sidecar (tidak ada fallback ke Python script)
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(exe_dir) = exe.parent() {
+            // Sidecar biasanya di directory yang sama dengan executable
+            let sidecar = exe_dir.join("infer_worker.exe");
+            if sidecar.exists() {
+                // Check if it's a valid sidecar (not placeholder)
+                if let Ok(metadata) = std::fs::metadata(&sidecar) {
+                    if metadata.len() > 1_000_000 {
+                        return sidecar;
+                    }
+                }
+            }
+            // Atau di subdirectory binaries
+            let sidecar_bin = exe_dir.join("binaries").join("infer_worker.exe");
+            if sidecar_bin.exists() {
+                if let Ok(metadata) = std::fs::metadata(&sidecar_bin) {
+                    if metadata.len() > 1_000_000 {
+                        return sidecar_bin;
+                    }
+                }
+            }
+        }
+    }
+    
+    // Jika tidak ditemukan, return path yang diharapkan (untuk error message)
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(exe_dir) = exe.parent() {
+            return exe_dir.join("infer_worker.exe");
+        }
+    }
+    
+    // Fallback (tidak akan digunakan karena akan error sebelumnya)
+    PathBuf::from("infer_worker.exe")
+}
+
+fn unique_path_with_ext(p: &PathBuf, ext: &str) -> PathBuf {
+    if !p.exists() {
+        return p.clone();
+    }
+    let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("model");
+    let parent = p.parent().unwrap();
+    for n in 1..10000 {
+        let candidate = parent.join(format!("{}_{}.{}", stem, n, ext));
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+    parent.join(format!("{}_{}.{}", stem, 0, ext))
 }
 
 fn unique_path(p: &PathBuf) -> PathBuf {

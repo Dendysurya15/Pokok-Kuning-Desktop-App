@@ -3,6 +3,7 @@ mod config;
 mod geo;
 mod infer;
 mod specs;
+mod yolo_onnx;
 
 use tauri::Emitter;
 
