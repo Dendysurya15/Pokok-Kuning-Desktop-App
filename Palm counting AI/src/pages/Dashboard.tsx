@@ -249,4 +249,8 @@ export function Dashboard() {
               <div key={i}>{line}</div>
             ))}
           </ScrollArea>
-        </CardConten
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
