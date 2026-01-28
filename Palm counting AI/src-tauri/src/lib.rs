@@ -32,15 +32,61 @@ fn list_models_cmd() -> Result<Vec<config::YoloModel>, String> {
 }
 
 #[tauri::command]
-fn add_model_cmd(source_path: String, name: Option<String>) -> Result<config::YoloModel, String> {
-    let path = std::path::Path::new(&source_path);
+async fn add_model_cmd(
+    window: tauri::Window,
+    source_path: String,
+    name: Option<String>,
+) -> Result<config::YoloModel, String> {
+    let path = std::path::Path::new(&source_path).to_path_buf();
     let name = name.unwrap_or_else(|| {
         path.file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or("model")
             .to_string()
     });
-    config_add_model(name, path).map_err(|e| e.to_string())
+    
+    // Check if conversion is needed
+    let needs_conversion = path.extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.eq_ignore_ascii_case("pt"))
+        .unwrap_or(false);
+    
+    if needs_conversion {
+        // Emit conversion start event
+        let _ = window.emit("model-conversion-start", &format!("Converting {} to ONNX...", name));
+    }
+    
+    // Run in background thread to avoid blocking UI
+    let window_clone = window.clone();
+    let name_clone = name.clone();
+    let path_clone = path.clone();
+    
+    // Use async runtime to wait for thread result
+    let (tx, rx) = std::sync::mpsc::channel();
+    
+    std::thread::spawn(move || {
+        let result = config_add_model(name_clone.clone(), &path_clone);
+        let _ = tx.send(result);
+    });
+    
+    // Wait for result - this will block the async task but not the UI thread
+    // Tauri's async runtime will handle this properly
+    let result = rx.recv().map_err(|e| format!("Thread error: {}", e))?;
+    
+    match result {
+        Ok(model) => {
+            if needs_conversion {
+                let _ = window_clone.emit("model-conversion-done", &format!("Successfully converted {}", name));
+            }
+            Ok(model)
+        }
+        Err(e) => {
+            if needs_conversion {
+                let _ = window_clone.emit("model-conversion-error", &format!("Conversion failed: {}", e));
+            }
+            Err(e.to_string())
+        }
+    }
 }
 
 #[tauri::command]

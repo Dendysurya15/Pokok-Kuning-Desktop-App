@@ -22,3 +22,8 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# PyInstaller build artifacts
+**/python_ai/build/
+**/python_ai/dist/
+**/python_ai/*.spec

@@ -311,7 +311,7 @@ pub fn add_model(name: String, source_path: &Path) -> Result<YoloModel, Box<dyn 
                 .arg(&imgsz.to_string())
                 .output();
             
-            match output {
+            let result = match output {
                 Ok(o) if o.status.success() && onnx_dest.exists() => {
                     eprintln!("Conversion successful!");
                     true
@@ -333,7 +333,34 @@ pub fn add_model(name: String, source_path: &Path) -> Result<YoloModel, Box<dyn 
                     eprintln!("Failed to run converter for conversion: {}", e);
                     false
                 }
+            };
+            
+            // Cleanup any build artifacts that might have been created
+            // (PyInstaller artifacts, temp files, etc.)
+            // Note: PyInstaller might create artifacts even when not explicitly called
+            // Clean them up to prevent Tauri watch mode from rebuilding
+            if use_python {
+                if let Some(script_dir) = converter_path.parent() {
+                    // Cleanup PyInstaller artifacts if they exist
+                    let build_dir = script_dir.join("build");
+                    let dist_dir = script_dir.join("dist");
+                    let spec_file = script_dir.join("infer_worker.spec");
+                    
+                    // Cleanup in background thread with small delay to ensure files are closed
+                    let build_dir_clone = build_dir.clone();
+                    let dist_dir_clone = dist_dir.clone();
+                    let spec_file_clone = spec_file.clone();
+                    std::thread::spawn(move || {
+                        // Small delay to ensure Python process has released file handles
+                        std::thread::sleep(std::time::Duration::from_millis(500));
+                        let _ = std::fs::remove_dir_all(&build_dir_clone);
+                        let _ = std::fs::remove_dir_all(&dist_dir_clone);
+                        let _ = std::fs::remove_file(&spec_file_clone);
+                    });
+                }
             }
+            
+            result
         } else {
             eprintln!("Converter path does not exist: {}", converter_path.display());
             false

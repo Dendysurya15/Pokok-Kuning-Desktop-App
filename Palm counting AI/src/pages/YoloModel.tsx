@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -12,6 +13,8 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
+import { Progress } from "@/components/ui/progress";
+import { Loader2 } from "lucide-react";
 
 interface YoloModel {
   id: number;
@@ -22,6 +25,8 @@ interface YoloModel {
 
 export function YoloModelPage() {
   const [models, setModels] = useState<YoloModel[]>([]);
+  const [isAdding, setIsAdding] = useState(false);
+  const [conversionStatus, setConversionStatus] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -36,17 +41,45 @@ export function YoloModelPage() {
     load();
   }, [load]);
 
+  useEffect(() => {
+    const unlistenStart = listen<string>("model-conversion-start", (e) => {
+      setConversionStatus(e.payload);
+    });
+    const unlistenDone = listen<string>("model-conversion-done", (e) => {
+      setConversionStatus(e.payload);
+      setTimeout(() => setConversionStatus(null), 3000);
+    });
+    const unlistenError = listen<string>("model-conversion-error", (e) => {
+      setConversionStatus(`Error: ${e.payload}`);
+      setTimeout(() => setConversionStatus(null), 5000);
+    });
+    
+    return () => {
+      unlistenStart.then((u) => u());
+      unlistenDone.then((u) => u());
+      unlistenError.then((u) => u());
+    };
+  }, []);
+
   const addModel = async () => {
     const selected = await open({
       multiple: false,
-      filters: [{ name: "YOLO model", extensions: ["pt"] }],
+      filters: [{ name: "YOLO model", extensions: ["pt", "onnx"] }],
     });
     if (!selected || typeof selected !== "string") return;
+    
+    setIsAdding(true);
+    setConversionStatus(null);
+    
     try {
       await invoke("add_model_cmd", { sourcePath: selected, name: undefined });
       await load();
     } catch (e) {
       console.error(e);
+      setConversionStatus(`Error: ${e}`);
+      setTimeout(() => setConversionStatus(null), 5000);
+    } finally {
+      setIsAdding(false);
     }
   };
 
@@ -73,9 +106,43 @@ export function YoloModelPage() {
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle>YOLO Model Library</CardTitle>
-          <Button onClick={addModel}>Add model</Button>
+          <Button onClick={addModel} disabled={isAdding}>
+            {isAdding ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Adding...
+              </>
+            ) : (
+              "Add model"
+            )}
+          </Button>
         </CardHeader>
         <CardContent>
+          {conversionStatus && (
+            <div className={`mb-4 rounded-md p-3 ${
+              conversionStatus.startsWith("Error") 
+                ? "bg-destructive/10 border border-destructive/20" 
+                : conversionStatus.includes("Successfully")
+                ? "bg-green-500/10 border border-green-500/20"
+                : "bg-muted"
+            }`}>
+              <div className="flex items-center gap-2">
+                {isAdding && <Loader2 className="h-4 w-4 animate-spin" />}
+                <p className={`text-sm ${
+                  conversionStatus.startsWith("Error") 
+                    ? "text-destructive" 
+                    : conversionStatus.includes("Successfully")
+                    ? "text-green-600"
+                    : ""
+                }`}>
+                  {conversionStatus}
+                </p>
+              </div>
+              {isAdding && (
+                <Progress value={undefined} className="mt-2" />
+              )}
+            </div>
+          )}
           {models.length === 0 ? (
             <p className="text-muted-foreground">No models. Add a .pt file.</p>
           ) : (

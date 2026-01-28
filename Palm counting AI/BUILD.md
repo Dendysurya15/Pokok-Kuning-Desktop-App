@@ -6,7 +6,7 @@
 
 **Development (dengan Python terinstall):**
 ```bash
-cd "Palm counting AI/python_ai"
+cd "Palm counting AI/src-tauri/python_ai"
 pip install -r requirements.txt
 ```
 
